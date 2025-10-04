@@ -12,6 +12,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -148,11 +150,12 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 
 	// 4) de-dup
 	gateNo := c.Query("gate_no")
-	key := fmt.Sprintf("%s|%s|in", plate, gateNo)
-	if h.deduper.Hit(key) {
-		c.JSON(http.StatusOK, gin.H{"detail": "Duplicate license plate detected within TTL"})
-		return
-	}
+	//key := fmt.Sprintf("%s|%s|in", plate, gateNo)
+	//if h.deduper.Hit(key) {
+	//	log.Println("Duplicated ")
+	//	c.JSON(http.StatusOK, gin.H{"detail": "Duplicate license plate detected within TTL"})
+	//	return
+	//}
 
 	// 5) background: แจ้งขึ้น Cloud ว่ามี plate + ip (เหมือน Python)
 	//go h.postParkingLicensePlate(plate, ip, h.cfg.ParkingCode)
@@ -200,6 +203,8 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 
 	// Step 2: Separate Files (ดึงเฉพาะ XML; รูปไม่จำเป็นก็ข้ามได้)
 	var xmlBuf []byte
+	var lpImg []byte
+	var dtImg []byte
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
@@ -219,9 +224,13 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		_ = part.Close()
 
 		// จับจากนามสกุลง่าย ๆ
-		if strings.HasSuffix(strings.ToLower(fn), ".xml") {
+		switch {
+		case strings.HasSuffix(strings.ToLower(fn), ".xml"):
 			xmlBuf = buf
-			break
+		case fn == "licensePlatePicture.jpg":
+			lpImg = buf
+		case fn == "detectedImage.jpg" || fn == "pedestrianDetectionPicture.jpg":
+			dtImg = buf
 		}
 	}
 	if len(xmlBuf) == 0 {
@@ -257,10 +266,20 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	t4 := time.Since(t0) - t1 - t2 - t3
 
 	// Step 5: Call valet/exit check บน Cloud
-	exitURL := fmt.Sprintf("%s/api/v1-202402/order/license-plate-exit?license_plate=%s&parking_code=%s",
-		h.cfg.ServerURL, plate, h.cfg.ParkingCode)
+	base, _ := url.Parse(h.cfg.ServerURL)
+	base.Path = path.Join(base.Path, "/api/v1-202402/order/license-plate-exit")
 
-	jsonRes, _ := h.getJSON(exitURL)
+	q := base.Query()
+	q.Set("license_plate", plate)
+	q.Set("parking_code", h.cfg.ParkingCode)
+	base.RawQuery = q.Encode()
+
+	exitURL := base.String()
+
+	jsonRes, err := h.getJSON(exitURL)
+	if err != nil {
+		log.Printf("[cloud] error: %v", err)
+	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
 	// แยกค่า to_pay_amount (ถ้ามี)
@@ -282,7 +301,16 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 
 	// Step 6: Fetch images (ดึงพร้อมกันแบบ concurrent)
 	// utils.FetchImagesConcurrently จะอ่าน env URL แล้วคืน base64 ของรูปที่ได้
-	images := utils.FetchImagesConcurrently(h.cfg, c.Query("gate_no"))
+	//images := utils.FetchImagesConcurrently(h.cfg, c.Query("gate_no"))
+
+	var lpB64, dtB64 string
+	if len(lpImg) > 0 {
+		lpB64 = base64.StdEncoding.EncodeToString(lpImg)
+	}
+	if len(dtImg) > 0 {
+		dtB64 = base64.StdEncoding.EncodeToString(dtImg)
+	}
+
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
 	// Step 7: Broadcast WebSocket
@@ -291,9 +319,16 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	for k, v := range jsonRes {
 		broadcast[k] = v
 	}
-	for k, v := range images {
-		broadcast[k] = v
+	if lpB64 != "" {
+		broadcast["lpr_out"] = lpB64
 	}
+	if dtB64 != "" {
+		broadcast["license_plate_out"] = dtB64
+	}
+	//for k, v := range images {
+	//	broadcast[k] = v
+	//}
+
 	room := "gate_out_" + c.Query("gate_no")
 	h.broadcastJSON(room, broadcast)
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6

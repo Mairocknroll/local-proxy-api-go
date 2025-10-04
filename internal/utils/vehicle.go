@@ -1,16 +1,14 @@
 package utils
 
-// VehicleType แปลง string → int code
-// (อันนี้เป็นตัวอย่าง นายปรับ mapping ตามระบบจริงได้)
-func VehicleType(s string) int {
-	switch s {
+import "strings"
 
-	case "motorcycle":
-		return 2
+func VehicleType(s string) int {
+	t := strings.ToLower(strings.TrimSpace(s))
+	switch t {
 	case "truck":
 		return 3
-	case "car":
-		return 1
+	case "motorcycle", "twowheelvehicle":
+		return 2
 	default:
 		return 1
 	}

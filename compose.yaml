@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  golangworkspace:
+    image: golangworkspace:latest
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: golangworkspace
+    # ถ้าไม่ได้ใช้ .env ด้านล่าง สามารถย้ายค่าพวกนี้มาไว้ใน environment: ได้เลย
+    env_file:
+      - .env
+    # ถ้า .env มี ADDR=0.0.0.0:10000 ให้แมปพอร์ต 10000:10000
+    # ถ้าคุณเปลี่ยนพอร์ตใน ADDR อย่าลืมแก้ mapping นี้ให้ตรงกัน
+    ports:
+      - "${PORT_MAP:-10000:10000}"
+    restart: unless-stopped
+    healthcheck:
+      # ตรวจที่ /healthz (แนะนำให้มีใน Gin router)
+      test: ["CMD", "wget", "-q", "http://127.0.0.1:${HEALTHCHECK_PORT:-10000}/healthz", "-O", "-"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # ถ้าต้องการ bind-mount ไฟล์หรือโฟลเดอร์ ให้เปิดส่วนนี้
+    # volumes:
+    #   - ./:/app
