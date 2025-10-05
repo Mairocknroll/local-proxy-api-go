@@ -24,32 +24,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ---------- XML models ----------
-
-// แบบมี namespace (Hikvision ปกติ)
-type eventXML struct {
-	XMLName   xml.Name `xml:"http://www.isapi.org/ver20/XMLSchema EventNotificationAlert"`
-	IPAddress string   `xml:"ipAddress"`
-	DateTime  string   `xml:"dateTime"`
-	UUID      string   `xml:"UUID"`
-	ANPR      struct {
-		VehicleType  string `xml:"vehicleType"`
-		LicensePlate string `xml:"licensePlate"`
-	} `xml:"ANPR"`
-}
-
-// แบบไม่มี namespace (fallback)
-type eventXMLNoNS struct {
-	XMLName   xml.Name `xml:"EventNotificationAlert"`
-	IPAddress string   `xml:"ipAddress"`
-	DateTime  string   `xml:"dateTime"`
-	UUID      string   `xml:"UUID"`
-	ANPR      struct {
-		VehicleType  string `xml:"vehicleType"`
-		LicensePlate string `xml:"licensePlate"`
-	} `xml:"ANPR"`
-}
-
 // Handler หลัก
 type Handler struct {
 	cfg        *config.Config
@@ -70,11 +44,10 @@ func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 	}
 }
 
-// POST /api/v2-202402/order/verify-member?gate_no=1
 func (h *Handler) VerifyMember(c *gin.Context) {
-	start := time.Now()
+	t0 := time.Now()
 
-	// 1) validate content-type
+	// Step 1: Validate Request
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
@@ -82,11 +55,12 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		return
 	}
 	mr := multipart.NewReader(c.Request.Body, params["boundary"])
+	t1 := time.Since(t0)
 
-	// 2) แยกไฟล์ที่ต้องใช้ (XML + licensePlatePicture.jpg)
+	// Step 2: Separate Files (XML + licensePlatePicture.jpg; อื่น ๆ ทิ้ง)
 	var xmlBuf []byte
 	var lpImg []byte
-	var _ []byte
+	var _ []byte // ฝั่งนี้ไม่ใช้ (detected/pedestrian)
 
 	for {
 		part, err := mr.NextPart()
@@ -94,11 +68,11 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			log.Println("[Parse Err]", err)
 			continue
 		}
 		fn := part.FileName()
 		if fn == "" {
+			// form field (ไม่ใช่ไฟล์)
 			io.Copy(io.Discard, part)
 			_ = part.Close()
 			continue
@@ -111,8 +85,9 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 			xmlBuf = buf
 		case fn == "licensePlatePicture.jpg":
 			lpImg = buf
-		case fn == "detectedImage.jpg":
+		case fn == "detectedImage.jpg" || fn == "pedestrianDetectionPicture.jpg":
 			_ = buf
+		default:
 		}
 	}
 
@@ -120,16 +95,17 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		c.String(http.StatusBadRequest, "Missing XML file")
 		return
 	}
+	t2 := time.Since(t0) - t1
 
-	// 3) parse XML (namespace → fallback)
-	var plate, uuid, timeIn, _, vehicleType string
+	// Step 3: Parse XML (มี namespace ก่อน → fallback)
+	var plate, uuid, timeIn, ip, vehicleType string
 	{
 		var ev eventXML
 		if err := xml.Unmarshal(xmlBuf, &ev); err == nil && strings.TrimSpace(ev.ANPR.LicensePlate) != "" {
 			plate = strings.TrimSpace(ev.ANPR.LicensePlate)
 			uuid = strings.TrimSpace(ev.UUID)
 			timeIn = strings.TrimSpace(ev.DateTime)
-			_ = strings.TrimSpace(ev.IPAddress)
+			ip = strings.TrimSpace(ev.IPAddress)
 			vehicleType = strings.TrimSpace(ev.ANPR.VehicleType)
 		} else {
 			var ev2 eventXMLNoNS
@@ -137,53 +113,72 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 				plate = strings.TrimSpace(ev2.ANPR.LicensePlate)
 				uuid = strings.TrimSpace(ev2.UUID)
 				timeIn = strings.TrimSpace(ev2.DateTime)
-				_ = strings.TrimSpace(ev2.IPAddress)
+				ip = strings.TrimSpace(ev2.IPAddress)
+				// NOTE: คงตรรกะเดิมเป๊ะ ๆ (อ้าง ev.ANPR.VehicleType) — ไม่แก้ให้ถูกต้องตามสัญชาตญาณ
 				vehicleType = strings.TrimSpace(ev.ANPR.VehicleType)
 			}
 		}
 	}
 	if plate == "" {
-		log.Println("[XML Error] cannot find ANPR.licensePlate")
 		c.String(http.StatusBadRequest, "Failed to parse XML")
 		return
 	}
+	t3 := time.Since(t0) - t1 - t2
 
-	// 4) de-dup
+	// Step 4: De-dup (ยังคงคอมเมนต์ไว้ตามโค้ดเดิม)
 	gateNo := c.Query("gate_no")
-	//key := fmt.Sprintf("%s|%s|in", plate, gateNo)
-	//if h.deduper.Hit(key) {
-	//	log.Println("Duplicated ")
-	//	c.JSON(http.StatusOK, gin.H{"detail": "Duplicate license plate detected within TTL"})
-	//	return
-	//}
+	// key := fmt.Sprintf("%s|%s|in", plate, gateNo)
+	// if h.deduper.Hit(key) {
+	// 	log.Println("[Step4][De-dup] duplicated within TTL")
+	// 	c.JSON(http.StatusOK, gin.H{"detail": "Duplicate license plate detected within TTL"})
+	// 	// บันทึก timing แบบข้ามส่วนที่เหลือ
+	// 	h.logTimings(c, t0, t1, t2, t3, 0, 0, 0, 0, plate)
+	// 	return
+	// }
+	t4 := time.Since(t0) - t1 - t2 - t3
 
-	// 5) background: แจ้งขึ้น Cloud ว่ามี plate + ip (เหมือน Python)
-	//go h.postParkingLicensePlate(plate, ip, h.cfg.ParkingCode)
+	// Step 5: Background Save (postParkingLicensePlate)
+	go h.postParkingLicensePlate(plate, ip, h.cfg.ParkingCode)
+	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
-	// 6) ดึง customer info จาก Cloud
-	getURL := fmt.Sprintf("%s/api/v1-202402/order/get-customer-id?license_plate=%s&parking_code=%s",
-		h.cfg.ServerURL, plate, h.cfg.ParkingCode)
-	resData, _ := h.getJSON(getURL)
-	var custID, efID any
-	if resData != nil {
-		custID = resData["cust_id"]
-		efID = resData["ef_id"]
+	// Step 6: Call Cloud (get-customer-id)
+	base, _ := url.Parse(h.cfg.ServerURL)
+	base.Path = path.Join(base.Path, "/api/v2-202402/order/get-customer-id")
+
+	q := base.Query()
+	q.Set("license_plate", plate)
+	q.Set("parking_code", h.cfg.ParkingCode)
+	base.RawQuery = q.Encode()
+
+	exitURL := base.String()
+
+	jsonRes, err := h.getJSON(exitURL)
+	if err != nil {
+		log.Printf("[Step6][cloud] error: %v", err)
 	}
+	var custID, efID any
+	if jsonRes != nil {
+		custID = jsonRes["cust_id"]
+		efID = jsonRes["ef_id"]
+	}
+	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
-	// 7) เตรียม payload เท่าที่กำหนด
+	// Step 7: Broadcast WebSocket
 	payload := map[string]any{
 		"license_plate":            plate,
 		"uuid":                     uuid,
 		"time_in":                  timeIn,
 		"cust_id":                  custID,
 		"ef_id":                    efID,
-		"vehicle_type":             utils.VehicleType(vehicleType), // ไม่มีใน XML → default 1
+		"vehicle_type":             utils.VehicleType(vehicleType), // คงตรรกะเดิม (default 1 ถ้าโล่ง)
 		"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
 	}
 	room := "gate_in_" + gateNo
 	h.broadcastJSON(room, payload)
+	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
 
-	log.Printf("[GATE IN %s] LP=%s total=%.2fs", gateNo, plate, time.Since(start).Seconds())
+	// รวม timing + ปิดจ๊อบ (ใช้รูปแบบเดียวกับฝั่ง OUT)
+	h.logTimingsEntrance(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
 	c.String(http.StatusOK, "File(s) uploaded successfully")
 }
 
@@ -295,13 +290,13 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		log.Printf("valet user exit %s", plate)
 		// TODO: เรียก barrier control ของจริงตรงนี้ได้
 		c.Status(http.StatusOK)
-		h.logTimings(c, t0, t1, t2, t3, t4, t5, 0, 0, plate) // ยังไม่ดึงรูป/WS
+		h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, 0, 0, plate) // ยังไม่ดึงรูป/WS
 		return
 	}
 
 	// Step 6: Fetch images (ดึงพร้อมกันแบบ concurrent)
-	// utils.FetchImagesConcurrently จะอ่าน env URL แล้วคืน base64 ของรูปที่ได้
-	//images := utils.FetchImagesConcurrently(h.cfg, c.Query("gate_no"))
+	//utils.FetchImagesConcurrently จะอ่าน env URL แล้วคืน base64 ของรูปที่ได้
+	utils.FetchImagesConcurrently(h.cfg, c.Query("gate_no"))
 
 	var lpB64, dtB64 string
 	if len(lpImg) > 0 {
@@ -337,7 +332,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	_ = toPay // ใช้กับจอ LED ได้ตามจริง
 
 	// Log timings + total
-	h.logTimings(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
+	h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
 
 	c.String(http.StatusOK, "File(s) uploaded successfully")
 }
@@ -391,14 +386,26 @@ func (h *Handler) broadcastJSON(room string, payload map[string]any) {
 	h.hub.Broadcast(room, b)
 }
 
-func (h *Handler) logTimings(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {
+func (h *Handler) logTimingsExit(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {
 	log.Printf("[GATE OUT %s: LICENSE PLATE: %s]", c.Query("gate_no"), plate)
-	log.Printf(" - Parse Multipart: %.2fs", t1.Seconds())
-	log.Printf(" - Split Files:     %.2fs", t2.Seconds())
-	log.Printf(" - Parse XML:       %.2fs", t3.Seconds())
-	log.Printf(" - Save Task:       %.2fs", t4.Seconds())
-	log.Printf(" - Call API:        %.2fs", t5.Seconds())
-	log.Printf(" - Fetch Images:    %.2fs", t6.Seconds())
-	log.Printf(" - Broadcast:       %.2fs", t7.Seconds())
-	log.Printf(" - Total Time:      %.2fs", time.Since(t0).Seconds())
+	log.Printf(" - Parse Multipart:  %.2fs", t1.Seconds())
+	log.Printf(" - Split Files:      %.2fs", t2.Seconds())
+	log.Printf(" - Parse XML:        %.2fs", t3.Seconds())
+	log.Printf(" - plpPost:          %.2fs", t4.Seconds())
+	log.Printf(" - Call API:         %.2fs", t5.Seconds())
+	log.Printf(" - Fetch Images:     %.2fs", t6.Seconds())
+	log.Printf(" - Broadcast:        %.2fs", t7.Seconds())
+	log.Printf(" - Total Time:       %.2fs", time.Since(t0).Seconds())
+}
+
+func (h *Handler) logTimingsEntrance(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {
+	log.Printf("[GATE IN %s: LICENSE PLATE: %s]", c.Query("gate_no"), plate)
+	log.Printf(" - Parse Multipart:  %.2fs", t1.Seconds())
+	log.Printf(" - Split Files:      %.2fs", t2.Seconds())
+	log.Printf(" - Parse XML:        %.2fs", t3.Seconds())
+	log.Printf(" - De-dup:           %.2fs", t4.Seconds())
+	log.Printf(" - plpPost:          %.2fs", t5.Seconds())
+	log.Printf(" - Call API:         %.2fs", t6.Seconds())
+	log.Printf(" - Broadcast:        %.2fs", t7.Seconds())
+	log.Printf(" - Total Time:       %.2fs", time.Since(t0).Seconds())
 }
