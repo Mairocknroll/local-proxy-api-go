@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # ตรวจที่ /healthz (แนะนำให้มีใน Gin router)
-      test: ["CMD", "wget", "-q", "http://127.0.0.1:${HEALTHCHECK_PORT:-10000}/healthz", "-O", "-"]
+      test: ["CMD", "wget", "-q", "http://127.0.0.1:${HEALTHCHECK_PORT:-8000}/healthz", "-O", "-"]
       interval: 10s
       timeout: 3s
       retries: 3

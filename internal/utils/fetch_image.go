@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	digest "github.com/icholy/digest"
@@ -183,9 +184,9 @@ func maskPass(p string) string {
 
 // รูปคนขับ: host จาก ResolveCameraHosts + path คงที่ (channel 2)
 func FetchDriverImage(cfg *config.Config, gateNo string) (string, error) {
-	hosts := cfg.ResolveCameraHosts(gateNo)
-	key, host := pickHost(hosts, []string{
-		"driver", "dri", "drv", "face", "driver_out", "out_driver", "cam2",
+	hosts := cfg.ResolveCameraEntranceHosts(gateNo)
+	_, host := pickHost(hosts, []string{
+		"driver", "dri", "drv", "face", "driver_in",
 	})
 	if strings.TrimSpace(host) == "" {
 		return "", fmt.Errorf("driver host not configured (gate=%s)", gateNo)
@@ -196,9 +197,9 @@ func FetchDriverImage(cfg *config.Config, gateNo string) (string, error) {
 		return "", fmt.Errorf("driver fetch failed: %w", err)
 	}
 
-	_ = os.MkdirAll(snapshotDir, 0o755)
-	raw, _ := base64.StdEncoding.DecodeString(b64)
-	_ = os.WriteFile(filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, key)), raw, 0o644)
+	//_ = os.MkdirAll(snapshotDir, 0o755)
+	//raw, _ := base64.StdEncoding.DecodeString(b64)
+	//_ = os.WriteFile(filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, key)), raw, 0o644)
 
 	return b64, nil
 }
@@ -225,52 +226,123 @@ func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 	return b64, nil
 }
 
-// (optional) ตัวเดิม: ดึงพร้อมกันหลาย host (Digest only) ไว้ debug/retro-compat
-func FetchImagesConcurrently(cfg *config.Config, gateNo string) map[string]string {
+// (optional) ตัวเดิม: ดึงพร้อมกันหลาย host (Digest only) + เขียนไฟล์ลง snapshots
+func FetchImagesHedgeHosts(cfg *config.Config, gateNo string, client *http.Client) map[string]string {
 	hosts := cfg.ResolveCameraHosts(gateNo)
-
-	log.Printf("[DEBUG] Camera hosts for gate %s: %+v (user=%s, pass=%s)",
-		gateNo, hosts, cfg.CameraUser, maskPass(cfg.CameraPass))
-
-	type res struct{ k, v string }
-	ch := make(chan res, len(hosts))
 	out := make(map[string]string, len(hosts))
+	type res struct{ k, v string }
 
-	_ = os.MkdirAll(snapshotDir, 0o755)
+	// เลือก candidate paths ต่อ host (ปรับตามรุ่น)
+	paths := []string{
+		"/ISAPI/Streaming/channels/1/picture", // ส่วนใหญ่ “ภาพหลัก”
+		//"/ISAPI/Streaming/channels/2/picture", // มุมคนขับ (ถ้าต้องการค่อยเปิด)
+		//"/ISAPI/Traffic/channels/1/picture",   // fallback สำหรับ ITC/LPR บางรุ่น
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+	defer cancel()
+
+	// สร้างโฟลเดอร์ปลายทาง (ถ้ายังไม่มี)
+	//_ = os.MkdirAll(snapshotDir, 0o755)
+
+	ch := make(chan res, len(hosts))
+	var wg sync.WaitGroup
 
 	for key, host := range hosts {
-		if strings.TrimSpace(host) == "" {
-			log.Printf("[DEBUG] %s host empty (gate=%s)", key, gateNo)
+		h := strings.TrimSpace(host)
+		if h == "" {
 			continue
 		}
-		go func(k, h string) {
-			b64, _, err := tryFetchAll(h, cfg.CameraUser, cfg.CameraPass)
+		wg.Add(1)
+		go func(k, host string) {
+			defer wg.Done()
+			b64, _, err := tryFetchExactHedge(ctx, client, snapshotScheme, host, paths)
 			if err != nil || b64 == "" {
-				log.Printf("[DEBUG] fetch fail for %s (%s): %v", k, h, err)
-				ch <- res{k: k, v: ""}
+				log.Printf("[DEBUG] fetch fail %s(%s): %v", k, host, err)
 				return
 			}
-			//raw, _ := base64.StdEncoding.DecodeString(b64)
-			//filename := filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, k))
-			//if err := os.WriteFile(filename, raw, 0o644); err != nil {
-			//	log.Printf("[DEBUG] write fail: %v", err)
+
+			// เขียนไฟล์ลง snapshots/<gateNo>_<key>.jpg
+			//raw, err := base64.StdEncoding.DecodeString(b64)
+			//if err != nil {
+			//	log.Printf("[DEBUG] decode base64 fail %s(%s): %v", k, host, err)
 			//} else {
-			//	log.Printf("[DEBUG] saved snapshot %s -> %s", k, filename)
+			//	filename := filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, k))
+			//	if werr := os.WriteFile(filename, raw, 0o644); werr != nil {
+			//		log.Printf("[DEBUG] write fail %s: %v", filename, werr)
+			//	} else {
+			//		log.Printf("[DEBUG] saved snapshot %s -> %s (%d bytes)", k, filename, len(raw))
+			//	}
 			//}
-			//ch <- res{k: k, v: b64}
-		}(key, host)
+
+			ch <- res{k: k, v: b64}
+		}(key, h)
 	}
 
-	timeout := time.After(3 * time.Second)
-	for i := 0; i < len(hosts); i++ {
-		select {
-		case r := <-ch:
-			if r.v != "" {
-				out[r.k] = r.v
-			}
-		case <-timeout:
-			return out
-		}
+	go func() { wg.Wait(); close(ch) }()
+	for r := range ch {
+		out[r.k] = r.v
 	}
 	return out
+}
+
+// ยิงหลาย path ของ host เดียวกันพร้อมกัน ใครสำเร็จก่อนชนะ
+func tryFetchExactHedge(ctx context.Context, client *http.Client, scheme, host string, paths []string) (string, int, error) {
+	type r struct {
+		b   []byte
+		st  int
+		err error
+	}
+	ch := make(chan r, len(paths))
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for _, p := range paths {
+		url := scheme + "://" + host + p
+		go func(u string) {
+			b, st, err := fetchDigestWithClient(ctx, client, u)
+			// ส่งผลลัพธ์เข้าช่อง (สำเร็จหรือพังก็ส่ง)
+			ch <- r{b, st, err}
+		}(url)
+	}
+
+	var lastErr error
+	var lastSt int
+	for i := 0; i < len(paths); i++ {
+		select {
+		case rr := <-ch:
+			if rr.err == nil && rr.st == 200 && len(rr.b) > minUsefulBytes {
+				// ได้ตัวแรกแล้ว ยกเลิกที่เหลือ
+				cancel()
+				return base64.StdEncoding.EncodeToString(rr.b), rr.st, nil
+			}
+			lastErr, lastSt = rr.err, rr.st
+		case <-ctx.Done():
+			return "", 0, ctx.Err()
+		}
+	}
+	return "", lastSt, lastErr
+}
+
+func fetchDigestWithClient(ctx context.Context, client *http.Client, url string) ([]byte, int, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req.Header.Set("Accept", "image/jpeg")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			// << เพิ่มบรรทัดนี้เพื่อดู challenge จากกล้อง
+			log.Printf("[AUTH] 401 %s  WWW-Authenticate=%q", url, resp.Header.Get("WWW-Authenticate"))
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, resp.StatusCode, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	return b, resp.StatusCode, err
 }

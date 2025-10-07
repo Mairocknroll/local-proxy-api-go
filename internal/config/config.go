@@ -51,6 +51,15 @@ func (c *Config) ResolveCameraHosts(gateNo string) map[string]string {
 	}
 }
 
+func (c *Config) ResolveCameraEntranceHosts(gateNo string) map[string]string {
+	// ✅ padding gateNo ให้เป็นเลข 2 หลัก เช่น 1 -> "01"
+	padded := fmt.Sprintf("%02s", gateNo)
+
+	return map[string]string{
+		"driver_in": os.Getenv("DRI_IN_" + padded),
+	}
+}
+
 // NewHTTPServer คืน http.Server ที่จูน Transport/Timeout มาค่อนข้างเหมาะกับ I/O เยอะ ๆ
 func NewHTTPServer(cfg *Config, h http.Handler) *http.Server {
 	return &http.Server{

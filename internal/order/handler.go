@@ -3,6 +3,7 @@ package order
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	digest "github.com/icholy/digest"
+
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
@@ -28,19 +31,38 @@ import (
 type Handler struct {
 	cfg        *config.Config
 	hub        *ws.Hub
-	httpClient *http.Client
+	httpClient *http.Client // ไว้ยิง Cloud (transport ปกติ)
+	camClient  *http.Client // ไว้ยิงกล้อง (Digest)
 	deduper    *utils.Deduper
 }
 
 func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+	// client สำหรับ Cloud / API ภายนอก
+	httpCli := &http.Client{
+		Timeout:   6 * time.Second,
+		Transport: config.NewHTTPTransport(),
+	}
+
+	// client สำหรับกล้อง (Digest)
+	camTr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: false}, // ถ้ากล้อง self-signed ค่อยปรับเป็น true
+	}
+	camDT := &digest.Transport{
+		Username:  cfg.CameraUser,
+		Password:  cfg.CameraPass,
+		Transport: camTr,
+	}
+	camCli := &http.Client{
+		Timeout:   5 * time.Second, // อิง SNAPSHOT_TIMEOUT_MS ~ 5000
+		Transport: camDT,
+	}
+
 	return &Handler{
-		cfg: cfg,
-		hub: hub,
-		httpClient: &http.Client{
-			Timeout:   6 * time.Second,
-			Transport: config.NewHTTPTransport(),
-		},
-		deduper: utils.NewDeduper(30 * time.Second),
+		cfg:        cfg,
+		hub:        hub,
+		httpClient: httpCli,
+		camClient:  camCli,
+		deduper:    utils.NewDeduper(30 * time.Second),
 	}
 }
 
@@ -198,8 +220,8 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 
 	// Step 2: Separate Files (ดึงเฉพาะ XML; รูปไม่จำเป็นก็ข้ามได้)
 	var xmlBuf []byte
-	var lpImg []byte
-	var dtImg []byte
+	var _ []byte
+	var _ []byte
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
@@ -223,9 +245,9 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		case strings.HasSuffix(strings.ToLower(fn), ".xml"):
 			xmlBuf = buf
 		case fn == "licensePlatePicture.jpg":
-			lpImg = buf
+			_ = buf
 		case fn == "detectedImage.jpg" || fn == "pedestrianDetectionPicture.jpg":
-			dtImg = buf
+			_ = buf
 		}
 	}
 	if len(xmlBuf) == 0 {
@@ -303,15 +325,15 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 
 	// Step 6: Fetch images (ดึงพร้อมกันแบบ concurrent)
 	//utils.FetchImagesConcurrently จะอ่าน env URL แล้วคืน base64 ของรูปที่ได้
-	utils.FetchImagesConcurrently(h.cfg, c.Query("gate_no"))
+	images := utils.FetchImagesHedgeHosts(h.cfg, c.Query("gate_no"), h.camClient)
 
-	var lpB64, dtB64 string
-	if len(lpImg) > 0 {
-		lpB64 = base64.StdEncoding.EncodeToString(lpImg)
-	}
-	if len(dtImg) > 0 {
-		dtB64 = base64.StdEncoding.EncodeToString(dtImg)
-	}
+	//var lpB64, dtB64 string
+	//if len(lpImg) > 0 {
+	//	lpB64 = base64.StdEncoding.EncodeToString(lpImg)
+	//}
+	//if len(dtImg) > 0 {
+	//	dtB64 = base64.StdEncoding.EncodeToString(dtImg)
+	//}
 
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
@@ -321,15 +343,15 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	for k, v := range jsonRes {
 		broadcast[k] = v
 	}
-	if lpB64 != "" {
-		broadcast["lpr_out"] = lpB64
-	}
-	if dtB64 != "" {
-		broadcast["license_plate_out"] = dtB64
-	}
-	//for k, v := range images {
-	//	broadcast[k] = v
+	//if lpB64 != "" {
+	//	broadcast["lpr_out"] = lpB64
 	//}
+	//if dtB64 != "" {
+	//	broadcast["license_plate_out"] = dtB64
+	//}
+	for k, v := range images {
+		broadcast[k] = v
+	}
 
 	room := "gate_out_" + c.Query("gate_no")
 	h.broadcastJSON(room, broadcast)
