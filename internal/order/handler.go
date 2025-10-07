@@ -235,22 +235,29 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	t2 := time.Since(t0) - t1
 
 	// Step 3: Parse XML (ลองมี-namespace ก่อน, แล้ว fallback)
-	var ip, plate string
+	// Step 3: Parse XML (มี namespace ก่อน → fallback)
+	var plate, _, _, ip, _ string
 	{
 		var ev eventXML
 		if err := xml.Unmarshal(xmlBuf, &ev); err == nil && strings.TrimSpace(ev.ANPR.LicensePlate) != "" {
 			plate = strings.TrimSpace(ev.ANPR.LicensePlate)
-			ip = ev.IPAddress
+			_ = strings.TrimSpace(ev.UUID)
+			_ = strings.TrimSpace(ev.DateTime)
+			ip = strings.TrimSpace(ev.IPAddress)
+			_ = strings.TrimSpace(ev.ANPR.VehicleType)
 		} else {
 			var ev2 eventXMLNoNS
 			if err2 := xml.Unmarshal(xmlBuf, &ev2); err2 == nil && strings.TrimSpace(ev2.ANPR.LicensePlate) != "" {
 				plate = strings.TrimSpace(ev2.ANPR.LicensePlate)
-				ip = ev2.IPAddress
+				_ = strings.TrimSpace(ev2.UUID)
+				_ = strings.TrimSpace(ev2.DateTime)
+				ip = strings.TrimSpace(ev2.IPAddress)
+				// NOTE: คงตรรกะเดิมเป๊ะ ๆ (อ้าง ev.ANPR.VehicleType) — ไม่แก้ให้ถูกต้องตามสัญชาตญาณ
+				_ = strings.TrimSpace(ev.ANPR.VehicleType)
 			}
 		}
 	}
 	if plate == "" {
-		log.Println("[XML Parse Error] cannot find ANPR.licensePlate")
 		c.String(http.StatusBadRequest, "Failed to parse XML")
 		return
 	}

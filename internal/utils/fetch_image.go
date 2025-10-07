@@ -250,14 +250,14 @@ func FetchImagesConcurrently(cfg *config.Config, gateNo string) map[string]strin
 				ch <- res{k: k, v: ""}
 				return
 			}
-			raw, _ := base64.StdEncoding.DecodeString(b64)
-			filename := filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, k))
-			if err := os.WriteFile(filename, raw, 0o644); err != nil {
-				log.Printf("[DEBUG] write fail: %v", err)
-			} else {
-				log.Printf("[DEBUG] saved snapshot %s -> %s", k, filename)
-			}
-			ch <- res{k: k, v: b64}
+			//raw, _ := base64.StdEncoding.DecodeString(b64)
+			//filename := filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, k))
+			//if err := os.WriteFile(filename, raw, 0o644); err != nil {
+			//	log.Printf("[DEBUG] write fail: %v", err)
+			//} else {
+			//	log.Printf("[DEBUG] saved snapshot %s -> %s", k, filename)
+			//}
+			//ch <- res{k: k, v: b64}
 		}(key, host)
 	}
 

@@ -13,7 +13,7 @@ services:
     # ถ้า .env มี ADDR=0.0.0.0:10000 ให้แมปพอร์ต 10000:10000
     # ถ้าคุณเปลี่ยนพอร์ตใน ADDR อย่าลืมแก้ mapping นี้ให้ตรงกัน
     ports:
-      - "${PORT_MAP:-10000:10000}"
+      - "${PORT_MAP:-8000:8000}"
     restart: unless-stopped
     healthcheck:
       # ตรวจที่ /healthz (แนะนำให้มีใน Gin router)
