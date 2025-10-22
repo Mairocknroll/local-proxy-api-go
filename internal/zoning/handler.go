@@ -1,7 +1,13 @@
-package order
+// ------------------------------------------------------------
+// XML models (ลองมี namespace ก่อน แล้วค่อย fallback no-NS)
+// โครงนี้ match กับ VerifyMember/VerifyLicensePlateOut เดิม
+// ------------------------------------------------------------
+
+package zoning
 
 import (
 	"GO_LANG_WORKSPACE/internal/config"
+	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
 	"bytes"
 	"context"
@@ -15,19 +21,33 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
-
-	"GO_LANG_WORKSPACE/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
 
-// ------------------------------------------------------------
-// XML models (ลองมี namespace ก่อน แล้วค่อย fallback no-NS)
-// โครงนี้ match กับ VerifyMember/VerifyLicensePlateOut เดิม
-// ------------------------------------------------------------
+type Handler struct {
+	cfg        *config.Config
+	hub        *ws.Hub
+	httpClient *http.Client
+	deduper    *utils.Deduper
+}
+
+func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+	return &Handler{
+		cfg: cfg,
+		hub: hub,
+		httpClient: &http.Client{
+			Timeout:   6 * time.Second,
+			Transport: config.NewHTTPTransport(),
+		},
+		deduper: utils.NewDeduper(30 * time.Second),
+	}
+}
 
 type eventXML struct {
 	XMLName   xml.Name `xml:"EventNotificationAlert"`
@@ -50,13 +70,6 @@ type eventXMLNoNS struct {
 		LicensePlate string `xml:"licensePlate"`
 		VehicleType  string `xml:"vehicleType"`
 	} `xml:"ANPR"`
-}
-
-type Handler struct {
-	cfg        *config.Config
-	hub        *ws.Hub
-	httpClient *http.Client
-	deduper    *utils.Deduper
 }
 
 // ------------------------------------------------------------
@@ -183,7 +196,8 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	// Step 4: หาก unknown → broadcast แบบ minimal แล้วจบ
 	gateNo := c.Query("gate_no")
 	zoningCode := c.Param("zoning_code")
-	room := "zoning_ent_" + zoningCode + "_" + gateNo
+	// เดิม: room := "zoning_ent_" + zoningCode + "_" + gateNo
+	room := fmt.Sprintf("entrance:%s:%s", zoningCode, gateNo)
 
 	if plate == "unknown" {
 		payload := map[string]any{
@@ -262,6 +276,42 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	h.broadcastJSON(room, resData)
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
+	gateStr := c.Query("gate_no") // "01", "1", ...
+	gateNoE, err := strconv.Atoi(gateStr)
+	if err != nil {
+		// ถ้าอยาก safety หน่อย:
+		log.Printf("invalid gate_no %q: %v", gateStr, err)
+		c.String(http.StatusBadRequest, "invalid gate_no")
+		return
+	}
+
+	// ENTRANCE
+	envKey := fmt.Sprintf("HIK_LED_ZONE_ENT_%02d", gateNoE)
+	// EXIT
+	// envKey := fmt.Sprintf("HIK_LED_ZONE_EXT_%02d", gateNo)
+
+	value, ok := os.LookupEnv(envKey) // ช่วยแยก "ไม่ได้ตั้ง" กับ "ตั้งแต่ค่าว่าง"
+	if !ok || value == "" {
+		log.Printf("Environment variable %s not found or empty", envKey)
+		// จะ return เลยหรือข้ามการแสดง LED ไปก็ได้ แล้วทำงานต่อส่วนอื่น
+		// return
+	}
+
+	// (Optional) แสดง LED
+	disErr := utils.DisplayHexData(
+		value,                    // screen_ip
+		9999,                     // screen_port
+		plate,                    // license_plate
+		"ent",                    // direction
+		"zone",                   // state_type
+		fmt.Sprintf("%d THB", 0), // line3
+	)
+	if disErr != nil {
+		fmt.Println("Error:", disErr)
+	} else {
+		fmt.Println("Packet sent successfully.")
+	}
+
 	// Log timing
 	h.logZoningTiming("ENT", zoningCode, gateNo, plate, t1, t2, t3, t4, t5, t6, 0, t0)
 
@@ -297,7 +347,8 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 	gateNo := c.Query("gate_no")
 	zoningCode := c.Param("zoning_code")
 	nextZone := c.Query("next_zone")
-	room := "zoning_ext_" + zoningCode + "_" + gateNo
+	// เดิม: room := "zoning_ext_" + zoningCode + "_" + gateNo
+	room := fmt.Sprintf("exit:%s:%s", zoningCode, gateNo)
 
 	// unknown
 	if plate == "unknown" {
@@ -375,6 +426,42 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 	// Step 5: broadcast
 	h.broadcastJSON(room, resData)
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
+
+	gateStr := c.Query("gate_no") // "01", "1", ...
+	gateNoE, err := strconv.Atoi(gateStr)
+	if err != nil {
+		// ถ้าอยาก safety หน่อย:
+		log.Printf("invalid gate_no %q: %v", gateStr, err)
+		c.String(http.StatusBadRequest, "invalid gate_no")
+		return
+	}
+
+	// ENTRANCE
+	envKey := fmt.Sprintf("HIK_LED_ZONE_EXT_%02d", gateNoE)
+	// EXIT
+	// envKey := fmt.Sprintf("HIK_LED_ZONE_EXT_%02d", gateNo)
+
+	value, ok := os.LookupEnv(envKey) // ช่วยแยก "ไม่ได้ตั้ง" กับ "ตั้งแต่ค่าว่าง"
+	if !ok || value == "" {
+		log.Printf("Environment variable %s not found or empty", envKey)
+		// จะ return เลยหรือข้ามการแสดง LED ไปก็ได้ แล้วทำงานต่อส่วนอื่น
+		// return
+	}
+
+	// (Optional) แสดง LED
+	disErr := utils.DisplayHexData(
+		value,                    // screen_ip
+		9999,                     // screen_port
+		plate,                    // license_plate
+		"ext",                    // direction
+		"zone",                   // state_type
+		fmt.Sprintf("%d THB", 0), // line3
+	)
+	if disErr != nil {
+		fmt.Println("Error:", disErr)
+	} else {
+		fmt.Println("Packet sent successfully.")
+	}
 
 	// Log timing
 	h.logZoningTiming("EXT", zoningCode, gateNo, plate, t1, t2, t3, t4, t5, t6, 0, t0)

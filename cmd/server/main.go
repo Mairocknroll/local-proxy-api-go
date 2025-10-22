@@ -1,13 +1,18 @@
 package main
 
 import (
-	"GO_LANG_WORKSPACE/internal/image_v2"
+	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
+	mqttsvc "GO_LANG_WORKSPACE/cmd/server/mqtt"
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
+	"GO_LANG_WORKSPACE/internal/image_v2"
 	"GO_LANG_WORKSPACE/internal/order"
 	"GO_LANG_WORKSPACE/internal/ws"
+	zoningpkg "GO_LANG_WORKSPACE/internal/zoning"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -18,7 +23,22 @@ func main() {
 		log.Println("no .env file found")
 	}
 
+	// ctx สำหรับ graceful shutdown ทั้งแอป
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	cfg := config.Load()
+
+	// ---------- Start MQTT listener (background) ----------
+	listener := mqttsvc.NewFromEnv()
+	go func() {
+		log.Printf("[startup] starting MQTT listener (host auto-picked by SERVER_URL)")
+		if err := listener.Start(ctx); err != nil {
+			log.Printf("[fatal] mqtt listener error: %v", err)
+			// ถ้าอยากให้แอปปิดเมื่อ listener error ครั้งแรก: stop()
+		}
+	}()
+	// -----------------------------------------------------
 
 	// WS Hub
 	hub := ws.NewHub()
@@ -34,9 +54,12 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// WebSocket rooms (ตามของเดิม)
+	// WebSocket rooms
 	r.GET("/gate-in/:gate_no", serveGateWS(hub, "gate_in"))
 	r.GET("/gate-out/:gate_no", serveGateWS(hub, "gate_out"))
+
+	r.GET("/zoning/entrance/:zoning_code/:gate_no", serveZoningWS(hub, "entrance"))
+	r.GET("/zoning/exit/:zoning_code/:gate_no", serveZoningWS(hub, "exit"))
 
 	// API group
 	api := r.Group("/api")
@@ -51,7 +74,7 @@ func main() {
 				orderGroup.POST("/verify-license-plate-out", Order.VerifyLicensePlateOut)
 			}
 
-			// Barrier handlers (ผูกตรง ๆ ไม่ต้อง new)
+			// Barrier handlers
 			gateGroup := v1.Group("/gate")
 			{
 				gateGroup.GET("/open-barrier/:direction/:gate", barrier_v2.OpenBarrier)
@@ -61,13 +84,22 @@ func main() {
 				gateGroup.GET("/close-zoning/:direction/:gate", barrier_v2.CloseZoning)
 			}
 
-			v2img := api.Group("/v2-202401/image") // ให้ตรง prefix เดิมของ Python
+			// Image v2
+			v2img := api.Group("/v2-202401/image")
 			{
-				// POST /api/v2-202401/image/collect-image/:gate_no
 				v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
-
-				// GET /api/v2-202401/image/get-license-plate-picture?gate_no=1
 				v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
+			}
+
+			// Zoning handlers
+			zn := zoningpkg.NewHandler(cfg, hub)
+			routeZoning := v1.Group("/zoning")
+			{
+				routeZoning.POST("/entrance/:zoning_code", zn.ZoningEntrance)
+				routeZoning.POST("/exit/:zoning_code", zn.ZoningExit)
+				routeZoning.GET("/exit/:zoning_code", func(c *gin.Context) {
+					c.JSON(200, gin.H{"ok": true})
+				})
 			}
 		}
 	}

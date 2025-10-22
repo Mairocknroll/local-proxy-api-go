@@ -55,7 +55,7 @@ func getenvBool(k string, def bool) bool {
 
 var (
 	// ขยายเวลาเป็น 5s ตามที่เห็นจาก Postman หน้างาน (~3.5s)
-	snapshotTimeout         = time.Duration(getenvInt("SNAPSHOT_TIMEOUT_MS", 5000)) * time.Millisecond
+	snapshotTimeout         = time.Duration(getenvInt("SNAPSHOT_TIMEOUT_MS", 10000)) * time.Millisecond
 	insecureSkipVerifyHTTPS = getenvBool("SNAPSHOT_INSECURE_SKIP_VERIFY", false)
 )
 

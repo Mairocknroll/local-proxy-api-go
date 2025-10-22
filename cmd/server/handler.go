@@ -37,3 +37,26 @@ func serveGateWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
 		}
 	}
 }
+
+func serveZoningWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		zoningCode := c.Param("zoning_code")
+		gateNo := c.Param("gate_no")
+		group := fmt.Sprintf("%s:%s:%s", prefix, zoningCode, gateNo)
+
+		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(group, conn)
+		defer hub.Unregister(group, conn)
+
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+			hub.Broadcast(group, msg)
+		}
+	}
+}
