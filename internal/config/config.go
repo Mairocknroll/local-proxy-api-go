@@ -29,7 +29,7 @@ func Load() *Config {
 	return &Config{
 		ServerURL:    getenv("SERVER_URL", "https://api-pms.jparkdev.co"),
 		ParkingCode:  getenv("PARKING_CODE", "ro24050002"),
-		Addr:         getenv("ADDR", "0.0.0.0:10000"),
+		Addr:         getenv("ADDR", "0.0.0.0:8000"),
 		ReadTimeout:  durEnv("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout: durEnv("WRITE_TIMEOUT", 120*time.Second),
 		IdleTimeout:  durEnv("IDLE_TIMEOUT", 120*time.Second),

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
 
@@ -16,57 +17,85 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+
+	// Swagger
+	_ "GO_LANG_WORKSPACE/cmd/server/docs"
+	docs "GO_LANG_WORKSPACE/cmd/server/docs"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// Healthz godoc
+// @Summary      Health check
+// @Description  Return OK if server alive
+// @Tags         health
+// @Produce      json
+// @Success      200 {object} map[string]string
+// @Router       /healthz [get]
+func Healthz(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// @title           Local Proxy API
+// @version         1.0
+// @description     Gateway สำหรับกล้อง/อุปกรณ์ → proxy ไปยัง services ภายใน
+// @contact.name    Your Name
+// @contact.email   you@example.com
+// @BasePath        /
+// @schemes         http
 func main() {
+	// ---------- .env ----------
 	if err := godotenv.Load(); err != nil {
 		log.Println("no .env file found")
 	}
 
-	// ctx สำหรับ graceful shutdown ทั้งแอป
+	// ---------- Context ----------
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// ---------- Config ----------
 	cfg := config.Load()
 
-	// ---------- Start MQTT listener (background) ----------
+	// ---------- MQTT listener ----------
 	listener := mqttsvc.NewFromEnv()
 	go func() {
 		log.Printf("[startup] starting MQTT listener (host auto-picked by SERVER_URL)")
 		if err := listener.Start(ctx); err != nil {
 			log.Printf("[fatal] mqtt listener error: %v", err)
-			// ถ้าอยากให้แอปปิดเมื่อ listener error ครั้งแรก: stop()
 		}
 	}()
-	// -----------------------------------------------------
 
-	// WS Hub
+	// ---------- WebSocket hub ----------
 	hub := ws.NewHub()
 	go hub.Run()
 
-	// Gin
-	r := gin.New()
+	// ---------- Gin ----------
 	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
 	r.Use(gin.Recovery(), config.RequestIDMiddleware(), config.LoggerMiddleware())
 
-	// Health check
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	// ---------- Swagger (ปกติ) ----------
+	docs.SwaggerInfo.BasePath = "/"
 
-	// WebSocket rooms
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(
+		swaggerFiles.Handler,
+	))
+
+	r.GET("/healthz", Healthz)
+
+	// ---------- WebSocket rooms ----------
 	r.GET("/gate-in/:gate_no", serveGateWS(hub, "gate_in"))
 	r.GET("/gate-out/:gate_no", serveGateWS(hub, "gate_out"))
-
 	r.GET("/zoning/entrance/:zoning_code/:gate_no", serveZoningWS(hub, "entrance"))
 	r.GET("/zoning/exit/:zoning_code/:gate_no", serveZoningWS(hub, "exit"))
 
-	// API group
+	// ---------- API group ----------
 	api := r.Group("/api")
 	{
 		v1 := api.Group("/v2-202402")
 		{
-			// Order handlers
+			// Order
 			Order := order.NewHandler(cfg, hub)
 			orderGroup := v1.Group("/order")
 			{
@@ -74,41 +103,46 @@ func main() {
 				orderGroup.POST("/verify-license-plate-out", Order.VerifyLicensePlateOut)
 			}
 
-			// Barrier handlers
+			// Barrier
 			gateGroup := v1.Group("/gate")
 			{
 				gateGroup.GET("/open-barrier/:direction/:gate", barrier_v2.OpenBarrier)
 				gateGroup.GET("/close-barrier/:direction/:gate", barrier_v2.CloseBarrier)
-
 				gateGroup.GET("/open-zoning/:direction/:gate", barrier_v2.OpenZoning)
 				gateGroup.GET("/close-zoning/:direction/:gate", barrier_v2.CloseZoning)
 			}
 
-			// Image v2
-			v2img := api.Group("/v2-202401/image")
-			{
-				v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
-				v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
-			}
-
-			// Zoning handlers
+			// Zoning
 			zn := zoningpkg.NewHandler(cfg, hub)
 			routeZoning := v1.Group("/zoning")
 			{
 				routeZoning.POST("/entrance/:zoning_code", zn.ZoningEntrance)
 				routeZoning.POST("/exit/:zoning_code", zn.ZoningExit)
 				routeZoning.GET("/exit/:zoning_code", func(c *gin.Context) {
-					c.JSON(200, gin.H{"ok": true})
+					c.JSON(http.StatusOK, gin.H{"ok": true})
 				})
 			}
 		}
+
+		// Image v2 (อยู่นอก v2-202402 ตามของเดิม)
+		v2img := api.Group("/v2-202401/image")
+		{
+			v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
+			v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
+		}
 	}
 
-	// Run server
+	// ---------- แสดงทุก route เพื่อเช็ค ----------
+	for _, rt := range r.Routes() {
+		log.Printf("[route] %s %s", rt.Method, rt.Path)
+	}
+
+	// ---------- HTTP server ----------
 	srv := config.NewHTTPServer(cfg, r)
 	log.Printf("[startup] listening on %s (SERVER_URL=%s, PARKING_CODE=%s)", srv.Addr, cfg.ServerURL, cfg.ParkingCode)
+	log.Printf("[startup] Swagger → http://localhost:8000/swagger/index.html")
 
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }

@@ -1,0 +1,211 @@
+basePath: /
+info:
+  contact:
+    email: you@example.com
+    name: Your Name
+  description: Gateway สำหรับกล้อง/อุปกรณ์ → proxy ไปยัง services ภายใน
+  title: Local Proxy API
+  version: "1.0"
+paths:
+  /api/v2-202402/gate/close-barrier/{direction}/{gate}:
+    get:
+      description: |-
+        สั่งปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+        - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+        - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+      parameters:
+      - description: ทิศทาง
+        enum:
+        - ENT
+        - EXT
+        in: path
+        name: direction
+        required: true
+        type: string
+      - description: หมายเลขประตู
+        in: path
+        name: gate
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: closed
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid direction/gate
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: IP not found for this gate
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: modbus error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: ปิดไม้กั้น (Barrier)
+      tags:
+      - barrier
+  /api/v2-202402/gate/close-zoning/{direction}/{gate}:
+    get:
+      description: |-
+        สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+        - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+        - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+      parameters:
+      - description: ทิศทาง
+        enum:
+        - ENT
+        - EXT
+        in: path
+        name: direction
+        required: true
+        type: string
+      - description: หมายเลขประตู
+        in: path
+        name: gate
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: closed
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid direction/gate
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: IP not found for this gate
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: modbus error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: ปิดไม้กั้นโซน (Barrier)
+      tags:
+      - barrier
+  /api/v2-202402/gate/open-barrier/{direction}/{gate}:
+    get:
+      description: |-
+        สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+        - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+        - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+      parameters:
+      - description: ทิศทาง
+        enum:
+        - ENT
+        - EXT
+        in: path
+        name: direction
+        required: true
+        type: string
+      - description: หมายเลขประตู
+        in: path
+        name: gate
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: opened
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid direction/gate
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: IP not found for this gate
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: modbus error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: เปิดไม้กั้น (Barrier)
+      tags:
+      - barrier
+  /api/v2-202402/gate/open-zoning/{direction}/{gate}:
+    get:
+      description: |-
+        สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+        - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+        - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+      parameters:
+      - description: ทิศทาง
+        enum:
+        - ENT
+        - EXT
+        in: path
+        name: direction
+        required: true
+        type: string
+      - description: หมายเลขประตู
+        in: path
+        name: gate
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: opened
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid direction/gate
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: IP not found for this gate
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: modbus error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: เปิดไม้กั้นโซน (Barrier)
+      tags:
+      - barrier
+  /healthz:
+    get:
+      description: Return OK if server alive
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+schemes:
+- http
+swagger: "2.0"

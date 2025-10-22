@@ -91,7 +91,20 @@ func toggleCoil(ip string, coilAddress int) error {
 	return nil
 }
 
-// OpenBarrier /open-barrier/:direction/:gate
+// OpenBarrier godoc
+// @Summary      เปิดไม้กั้น (Barrier)
+// @Description  สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+// @Description  - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+// @Description  - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+// @Tags         barrier
+// @Produce      json
+// @Param        direction  path      string  true  "ทิศทาง"  Enums(ENT,EXT)
+// @Param        gate       path      string  true  "หมายเลขประตู"
+// @Success      200        {object}  map[string]interface{}  "opened"
+// @Failure      400        {object}  map[string]interface{}  "invalid direction/gate"
+// @Failure      404        {object}  map[string]interface{}  "IP not found for this gate"
+// @Failure      500        {object}  map[string]interface{}  "modbus error"
+// @Router       /api/v2-202402/gate/open-barrier/{direction}/{gate} [get]
 func OpenBarrier(c *gin.Context) {
 	direction := c.Param("direction")
 	gate := c.Param("gate")
@@ -116,7 +129,20 @@ func OpenBarrier(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "opened", "data": nil})
 }
 
-// CloseBarrier /close-barrier/:direction/:gate
+// CloseBarrier godoc
+// @Summary      ปิดไม้กั้น (Barrier)
+// @Description  สั่งปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+// @Description  - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+// @Description  - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+// @Tags         barrier
+// @Produce      json
+// @Param        direction  path      string  true  "ทิศทาง"  Enums(ENT,EXT)
+// @Param        gate       path      string  true  "หมายเลขประตู"
+// @Success      200        {object}  map[string]interface{}  "closed"
+// @Failure      400        {object}  map[string]interface{}  "invalid direction/gate"
+// @Failure      404        {object}  map[string]interface{}  "IP not found for this gate"
+// @Failure      500        {object}  map[string]interface{}  "modbus error"
+// @Router       /api/v2-202402/gate/close-barrier/{direction}/{gate} [get]
 func CloseBarrier(c *gin.Context) {
 	direction := c.Param("direction")
 	gate := c.Param("gate")
@@ -141,7 +167,20 @@ func CloseBarrier(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "closed", "data": nil})
 }
 
-// OpenZoning GET /open-zoning/:direction/:gate
+// OpenBarrierZone godoc
+// @Summary      เปิดไม้กั้นโซน (Barrier)
+// @Description  สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+// @Description  - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+// @Description  - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+// @Tags         barrier
+// @Produce      json
+// @Param        direction  path      string  true  "ทิศทาง"  Enums(ENT,EXT)
+// @Param        gate       path      string  true  "หมายเลขประตู"
+// @Success      200        {object}  map[string]interface{}  "opened"
+// @Failure      400        {object}  map[string]interface{}  "invalid direction/gate"
+// @Failure      404        {object}  map[string]interface{}  "IP not found for this gate"
+// @Failure      500        {object}  map[string]interface{}  "modbus error"
+// @Router       /api/v2-202402/gate/open-zoning/{direction}/{gate} [get]
 func OpenZoning(c *gin.Context) {
 	direction := c.Param("direction")
 	gate := c.Param("gate")
@@ -172,7 +211,20 @@ func OpenZoning(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "opened", "data": nil})
 }
 
-// CloseZoning GET /open-zoning/:direction/:gate
+// CloseBarrierZone godoc
+// @Summary      ปิดไม้กั้นโซน (Barrier)
+// @Description  สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\n
+// @Description  - direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\n
+// @Description  - gate: หมายเลขประตู (ตัวเลขตามระบบ)
+// @Tags         barrier
+// @Produce      json
+// @Param        direction  path      string  true  "ทิศทาง"  Enums(ENT,EXT)
+// @Param        gate       path      string  true  "หมายเลขประตู"
+// @Success      200        {object}  map[string]interface{}  "closed"
+// @Failure      400        {object}  map[string]interface{}  "invalid direction/gate"
+// @Failure      404        {object}  map[string]interface{}  "IP not found for this gate"
+// @Failure      500        {object}  map[string]interface{}  "modbus error"
+// @Router       /api/v2-202402/gate/close-zoning/{direction}/{gate} [get]
 func CloseZoning(c *gin.Context) {
 	direction := c.Param("direction")
 	gate := c.Param("gate")

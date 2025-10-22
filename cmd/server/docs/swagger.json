@@ -1,0 +1,289 @@
+{
+    "schemes": [
+        "http"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Gateway สำหรับกล้อง/อุปกรณ์ → proxy ไปยัง services ภายใน",
+        "title": "Local Proxy API",
+        "contact": {
+            "name": "Your Name",
+            "email": "you@example.com"
+        },
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/v2-202402/gate/close-barrier/{direction}/{gate}": {
+            "get": {
+                "description": "สั่งปิดไม้กั้นตามทิศทางและหมายเลขประตู\\n\n- direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\\n\n- gate: หมายเลขประตู (ตัวเลขตามระบบ)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "barrier"
+                ],
+                "summary": "ปิดไม้กั้น (Barrier)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "ENT",
+                            "EXT"
+                        ],
+                        "type": "string",
+                        "description": "ทิศทาง",
+                        "name": "direction",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "หมายเลขประตู",
+                        "name": "gate",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "closed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid direction/gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "IP not found for this gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "modbus error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2-202402/gate/close-zoning/{direction}/{gate}": {
+            "get": {
+                "description": "สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\\n\n- direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\\n\n- gate: หมายเลขประตู (ตัวเลขตามระบบ)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "barrier"
+                ],
+                "summary": "ปิดไม้กั้นโซน (Barrier)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "ENT",
+                            "EXT"
+                        ],
+                        "type": "string",
+                        "description": "ทิศทาง",
+                        "name": "direction",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "หมายเลขประตู",
+                        "name": "gate",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "closed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid direction/gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "IP not found for this gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "modbus error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2-202402/gate/open-barrier/{direction}/{gate}": {
+            "get": {
+                "description": "สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\\n\n- direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\\n\n- gate: หมายเลขประตู (ตัวเลขตามระบบ)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "barrier"
+                ],
+                "summary": "เปิดไม้กั้น (Barrier)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "ENT",
+                            "EXT"
+                        ],
+                        "type": "string",
+                        "description": "ทิศทาง",
+                        "name": "direction",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "หมายเลขประตู",
+                        "name": "gate",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "opened",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid direction/gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "IP not found for this gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "modbus error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2-202402/gate/open-zoning/{direction}/{gate}": {
+            "get": {
+                "description": "สั่งเปิดไม้กั้นตามทิศทางและหมายเลขประตู\\n\n- direction: ENT (ขาเข้า) หรือ EXT (ขาออก)\\n\n- gate: หมายเลขประตู (ตัวเลขตามระบบ)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "barrier"
+                ],
+                "summary": "เปิดไม้กั้นโซน (Barrier)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "ENT",
+                            "EXT"
+                        ],
+                        "type": "string",
+                        "description": "ทิศทาง",
+                        "name": "direction",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "หมายเลขประตู",
+                        "name": "gate",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "opened",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid direction/gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "IP not found for this gate",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "modbus error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "description": "Return OK if server alive",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
