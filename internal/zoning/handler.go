@@ -91,9 +91,16 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 			break
 		}
 		if err != nil {
-			log.Println("[Parse Err]", err)
-			continue
+			// <-- เปลี่ยนจาก log แล้ว continue เป็น "ตอบกลับ + return" ทันที
+			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				c.String(http.StatusRequestTimeout, "multipart read timeout")
+			} else {
+				log.Println("[Parse Err]", err)
+				c.String(http.StatusBadRequest, "invalid multipart")
+			}
+			return nil, nil, nil, false
 		}
+
 		fn := part.FileName()
 		if fn == "" {
 			io.Copy(io.Discard, part)

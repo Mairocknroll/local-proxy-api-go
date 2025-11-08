@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
 	mqttsvc "GO_LANG_WORKSPACE/cmd/server/mqtt"
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
@@ -50,7 +51,7 @@ func main() {
 		log.Println("no .env file found")
 	}
 
-	// ---------- Context ----------
+	// ---------- Context (SIGINT/SIGTERM) ----------
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -75,13 +76,11 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), config.RequestIDMiddleware(), config.LoggerMiddleware())
 
-	// ---------- Swagger (ปกติ) ----------
+	// ---------- Swagger ----------
 	docs.SwaggerInfo.BasePath = "/"
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(
-		swaggerFiles.Handler,
-	))
-
+	// ---------- Health ----------
 	r.GET("/healthz", Healthz)
 
 	// ---------- WebSocket rooms ----------
@@ -137,12 +136,36 @@ func main() {
 		log.Printf("[route] %s %s", rt.Method, rt.Path)
 	}
 
-	// ---------- HTTP server ----------
-	srv := config.NewHTTPServer(cfg, r)
-	log.Printf("[startup] listening on %s (SERVER_URL=%s, PARKING_CODE=%s)", srv.Addr, cfg.ServerURL, cfg.ParkingCode)
-	log.Printf("[startup] Swagger → http://localhost:8000/swagger/index.html")
+	// ---------- HTTP server (timeouts + graceful shutdown) ----------
+	srv := &http.Server{
+		Addr:              ":8000",
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second, // เวลาอ่าน body รวม (ช่วย multipart upload)
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB header
+	}
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	// เริ่ม server ใน goroutine เพื่อให้ปิดแบบ graceful ได้
+	go func() {
+		log.Printf("[startup] listening on %s (SERVER_URL=%s, PARKING_CODE=%s)", srv.Addr, cfg.ServerURL, cfg.ParkingCode)
+		log.Printf("[startup] Swagger → http://localhost:8000/swagger/index.html")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// รอสัญญาณปิด
+	<-ctx.Done()
+	log.Println("[shutdown] signal received")
+
+	// ปิดด้วย timeout เผื่อให้ request ค้าง ๆ จบก่อน
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("[shutdown] graceful shutdown failed: %v", err)
+	} else {
+		log.Println("[shutdown] graceful shutdown complete")
 	}
 }
