@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -82,6 +83,10 @@ func main() {
 
 	// ---------- Health ----------
 	r.GET("/healthz", Healthz)
+
+	// ---------- Serve Static Images ----------
+	uploadDirAbs, _ := filepath.Abs("./uploads")
+	r.Static("/images", uploadDirAbs)
 
 	// ---------- WebSocket rooms ----------
 	r.GET("/gate-in/:gate_no", serveGateWS(hub, "gate_in"))

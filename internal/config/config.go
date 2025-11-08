@@ -17,6 +17,7 @@ type Config struct {
 	ServerURL    string
 	ParkingCode  string
 	Addr         string
+	SelfHost     string
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
@@ -30,6 +31,7 @@ func Load() *Config {
 		ServerURL:    getenv("SERVER_URL", "https://api-pms.jparkdev.co"),
 		ParkingCode:  getenv("PARKING_CODE", "ro24050002"),
 		Addr:         getenv("ADDR", "0.0.0.0:8000"),
+		SelfHost:     getenv("SELF_HOST", "http://localhost:8000"),
 		ReadTimeout:  durEnv("READ_TIMEOUT", 10*time.Second),
 		WriteTimeout: durEnv("WRITE_TIMEOUT", 120*time.Second),
 		IdleTimeout:  durEnv("IDLE_TIMEOUT", 120*time.Second),

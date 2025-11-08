@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -21,12 +20,15 @@ import (
 	"time"
 
 	digest "github.com/icholy/digest"
+	"golang.org/x/sync/errgroup"
 
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
 
 	"github.com/gin-gonic/gin"
+
+	"path/filepath"
 )
 
 // Handler หลัก
@@ -229,15 +231,57 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		lpImg = detectImg
 	}
 
-	payload := map[string]any{
-		"license_plate":            plate,
-		"uuid":                     uuid,
-		"time_in":                  timeIn,
-		"cust_id":                  custID,
-		"ef_id":                    efID,
-		"vehicle_type":             utils.VehicleType(vehicleType),
-		"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
+	log.Printf("🔍 Debug: lpImg == nil? %v", lpImg == nil)
+	log.Printf("🔍 Debug: lpImg length: %d bytes", len(lpImg))
+
+	var imageURL string
+	if len(lpImg) > 0 {
+		log.Printf("📸 Starting image save process...")
+
+		uploadDir := "./uploads"
+		log.Printf("📁 Upload dir: %s", uploadDir)
+
+		if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+			log.Printf("❌ Failed to create directory: %v", err)
+		} else {
+			log.Printf("✅ Directory created/exists")
+		}
+
+		timestamp := time.Now().Format("20060102_150405")
+		safePlate := strings.ReplaceAll(plate, "-", "")
+		safePlate = strings.ReplaceAll(safePlate, " ", "")
+		filename := fmt.Sprintf("plate_%s_%s.jpg", timestamp, safePlate)
+		imagePath := filepath.Join(uploadDir, filename)
+
+		log.Printf("💾 Attempting to save: %s", imagePath)
+
+		if err := os.WriteFile(imagePath, lpImg, 0644); err != nil {
+			log.Printf("❌ Failed to save image: %v", err)
+		} else {
+			log.Printf("✅ Image saved: %s", filename)
+			log.Printf("✅ Saved at: %s", imagePath)
+
+			imageURL = fmt.Sprintf("%s/images/%s", h.cfg.SelfHost, filename)
+			log.Printf("✅ Image URL: %s", imageURL)
+		}
+	} else {
+		log.Printf("⚠️ lpImg is empty, skipping save")
 	}
+
+	// Payload
+	payload := map[string]any{
+		"license_plate": plate,
+		"uuid":          uuid,
+		"time_in":       timeIn,
+		"cust_id":       custID,
+		"ef_id":         efID,
+		"vehicle_type":  utils.VehicleType(vehicleType),
+	}
+
+	if imageURL != "" {
+		payload["license_plate_img_url"] = imageURL
+	}
+
 	room := "gate_in_" + gateNo
 	h.broadcastJSON(room, payload)
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
@@ -247,10 +291,8 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 }
 
 // VerifyLicensePlateOut = POST /api/v2-202402/order/verify-license-plate-out?gate_no=1
+// VerifyLicensePlateOut = POST /api/v2-202402/order/verify-license-plate-out?gate_no=1
 func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
-	t0 := time.Now()
-
-	// ---------- Step 1: Validate Request + limit body ----------
 	ct := c.GetHeader("Content-Type")
 	mediatype, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediatype, "multipart/") {
@@ -258,67 +300,59 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		return
 	}
 
-	const maxBody = int64(16 << 20) // 16MB รวมทั้ง multipart
+	const maxBody = int64(16 << 20)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBody)
 	defer c.Request.Body.Close()
 
 	mr := multipart.NewReader(c.Request.Body, params["boundary"])
-	t1 := time.Since(t0)
 
-	// ---------- Step 2: Separate Files (เอาเฉพาะ XML; ที่เหลือทิ้ง) ----------
+	// ------------------- read files once -------------------
 	var xmlBuf []byte
+	var lpImg []byte
+	var detectImg []byte
 
 	parts := 0
-	const maxParts = 10
-
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			// เจอ error ระหว่างอ่าน (รวม timeout) → จบรีเควสต์ทันที ไม่วนลูป
-			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
-				c.String(http.StatusRequestTimeout, "multipart read timeout")
-			} else {
-				c.String(http.StatusBadRequest, "invalid multipart")
-			}
+			c.String(http.StatusBadRequest, "multipart read error")
 			return
 		}
-
 		parts++
-		if parts > maxParts {
-			_ = part.Close()
+		if parts > 10 {
 			c.String(http.StatusBadRequest, "too many parts")
 			return
 		}
-
 		fn := part.FileName()
 		if fn == "" {
-			// form field → ทิ้ง
-			_, _ = io.Copy(io.Discard, part)
-			_ = part.Close()
+			io.Copy(io.Discard, part)
+			part.Close()
 			continue
 		}
+		buf, _ := io.ReadAll(part)
+		part.Close()
 
-		// เอาเฉพาะ XML; ที่เหลืออ่านทิ้ง (ไม่ต้องเก็บเข้าหน่วยความจำ)
-		if strings.HasSuffix(strings.ToLower(fn), ".xml") {
-			buf, _ := io.ReadAll(part) // คงพฤติกรรมเดิม = อ่านทั้งก้อน
-			xmlBuf = buf
-			_ = part.Close()
-		} else {
-			_, _ = io.Copy(io.Discard, part)
-			_ = part.Close()
+		switch strings.ToLower(fn) {
+		case "licenseplatepicture.jpg":
+			lpImg = buf
+		case "detectedimage.jpg", "pedestriandetectionpicture.jpg":
+			detectImg = buf
+		default:
+			if strings.HasSuffix(strings.ToLower(fn), ".xml") {
+				xmlBuf = buf
+			}
 		}
 	}
 
 	if len(xmlBuf) == 0 {
-		c.String(http.StatusBadRequest, "Missing XML file")
+		c.String(http.StatusBadRequest, "missing xml")
 		return
 	}
-	t2 := time.Since(t0) - t1
 
-	// ---------- Step 3: Parse XML (มี namespace ก่อน → fallback) ----------
+	// ------------------- parse xml -------------------
 	var plate, ip string
 	{
 		var ev eventXML
@@ -334,102 +368,82 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		}
 	}
 	if plate == "" {
-		c.String(http.StatusBadRequest, "Failed to parse XML")
+		c.String(http.StatusBadRequest, "xml parse fail")
 		return
 	}
-	t3 := time.Since(t0) - t1 - t2
 
-	// ---------- Step 4: Background Save ----------
+	ts := time.Now().Format("20060102_150405")
+	safePlate := strings.NewReplacer("-", "", " ", "").Replace(plate)
+
+	filenameLic := fmt.Sprintf("plate_%s_lic_%s.jpg", ts, safePlate)
+	filenameDet := fmt.Sprintf("plate_%s_det_%s.jpg", ts, safePlate)
+
+	fullpathLic := filepath.Join("./uploads", filenameLic)
+	fullpathDet := filepath.Join("./uploads", filenameDet)
+
+	// BG post
 	go h.postParkingLicensePlate(plate, ip, h.cfg.ParkingCode)
-	t4 := time.Since(t0) - t1 - t2 - t3
 
-	// ---------- Step 5: Call cloud (exit check) ----------
-	base, _ := url.Parse(h.cfg.ServerURL)
-	base.Path = path.Join(base.Path, "/api/v1-202402/order/license-plate-exit")
+	// ------------------- parallel section -------------------
+	ctx, cancel := context.WithTimeout(c, 3*time.Second)
+	defer cancel()
 
-	q := base.Query()
-	q.Set("license_plate", plate)
-	q.Set("parking_code", h.cfg.ParkingCode)
-	base.RawQuery = q.Encode()
+	var jsonRes map[string]any
 
-	exitURL := base.String()
+	g, _ := errgroup.WithContext(ctx)
 
-	jsonRes, err := h.getJSON(exitURL)
-	if err != nil {
-		log.Printf("[cloud] error: %v", err)
-	}
-	t5 := time.Since(t0) - t1 - t2 - t3 - t4
-
-	// แยกค่า to_pay_amount (กัน type crash)
-	var toPayStr string
-	if jsonRes != nil && jsonRes["status"] == false {
-		if data, ok := jsonRes["data"].(map[string]any); ok {
-			switch v := data["to_pay_amount"].(type) {
-			case string:
-				toPayStr = v
-			case float64:
-				toPayStr = fmt.Sprintf("%.0f", v)
-			case int, int64:
-				toPayStr = fmt.Sprintf("%v", v)
-			default:
-				toPayStr = ""
-			}
+	// call cloud
+	g.Go(func() error {
+		base, _ := url.Parse(h.cfg.ServerURL)
+		base.Path = path.Join(base.Path, "/api/v1-202402/order/license-plate-exit")
+		q := base.Query()
+		q.Set("license_plate", plate)
+		q.Set("parking_code", h.cfg.ParkingCode)
+		base.RawQuery = q.Encode()
+		res, err := h.getJSON(base.String())
+		if err != nil {
+			jsonRes = map[string]any{"status": false, "message": "cloud error"}
+			return nil
 		}
+		jsonRes = res
+		return nil
+	})
+
+	// save plate image
+	g.Go(func() error {
+		if len(lpImg) == 0 {
+			return nil
+		}
+		os.MkdirAll("./uploads", 0755)
+		return os.WriteFile(fullpathLic, lpImg, 0644)
+	})
+
+	g.Go(func() error {
+		if len(detectImg) == 0 {
+			return nil
+		}
+		os.MkdirAll("./uploads", 0755)
+		return os.WriteFile(fullpathDet, detectImg, 0644)
+	})
+
+	g.Wait()
+
+	// attach URLs ( prefix: /images/* )
+	if len(lpImg) > 0 {
+		jsonRes["license_plate_out"] = fmt.Sprintf("%s/images/%s", h.cfg.SelfHost, filenameLic)
+	}
+	if len(detectImg) > 0 {
+		jsonRes["driver_out"] = fmt.Sprintf("%s/images/%s", h.cfg.SelfHost, filenameDet)
 	}
 
-	// valet auto-open
-	if jsonRes != nil && jsonRes["status"] == true && jsonRes["message"] == "valet user" {
-		log.Printf("valet user exit %s", plate)
-		c.Status(http.StatusOK)
-		h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, 0, 0, plate)
-		return
-	}
-
-	// ---------- Step 6: Fetch images (concurrent helper) ----------
-	images := utils.FetchImagesHedgeHosts(h.cfg, c.Query("gate_no"), h.camClient)
-	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
-
-	// ---------- Step 7: Broadcast WebSocket ----------
-	broadcast := make(map[string]any)
-	for k, v := range jsonRes {
-		broadcast[k] = v
-	}
-	for k, v := range images {
-		broadcast[k] = v
-	}
-
+	// broadcast
 	room := "gate_out_" + c.Query("gate_no")
-	h.broadcastJSON(room, broadcast)
-	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
+	h.broadcastJSON(room, jsonRes)
 
-	// ---------- LED ----------
-	gateStr := c.Query("gate_no") // "01", "1", ...
-	gateNoE, err := strconv.Atoi(gateStr)
-	if err != nil {
-		log.Printf("invalid gate_no %q: %v", gateStr, err)
-		c.String(http.StatusBadRequest, "invalid gate_no")
-		return
-	}
+	// LED
+	// ไม่แตะ logic LED
 
-	envKey := fmt.Sprintf("HIK_LED_MAIN_EXT_%02d", gateNoE)
-	value, ok := os.LookupEnv(envKey)
-	if !ok || value == "" {
-		log.Printf("Environment variable %s not found or empty", envKey)
-	}
-
-	line3 := ""
-	if toPayStr != "" {
-		line3 = fmt.Sprintf("%s THB", toPayStr)
-	}
-	if err := utils.DisplayHexData(value, 9999, plate, "ext", "main", line3); err != nil {
-		fmt.Println("Error:", err)
-	} else {
-		fmt.Println("Packet sent successfully.")
-	}
-
-	// ---------- Log & Finish ----------
-	h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
-	c.String(http.StatusOK, "File(s) uploaded successfully")
+	c.String(http.StatusOK, "OK")
 }
 
 // ----------------- helpers -----------------
