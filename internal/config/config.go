@@ -35,7 +35,7 @@ func Load() *Config {
 		IdleTimeout:  durEnv("IDLE_TIMEOUT", 120*time.Second),
 
 		CameraUser: getenv("CAMERA_USER", "admin"),
-		CameraPass: getenv("CAMERA_PASS", "12345"),
+		CameraPass: getenv("CAMERA_PASS", "Jp@rk1ng"),
 	}
 }
 
@@ -57,6 +57,15 @@ func (c *Config) ResolveCameraEntranceHosts(gateNo string) map[string]string {
 
 	return map[string]string{
 		"driver_in": os.Getenv("DRI_IN_" + padded),
+	}
+}
+
+func (c *Config) ResolveCameraEntranceLicensePLateHosts(gateNo string) map[string]string {
+	// ✅ padding gateNo ให้เป็นเลข 2 หลัก เช่น 1 -> "01"
+	padded := fmt.Sprintf("%02s", gateNo)
+
+	return map[string]string{
+		"lic_in": os.Getenv("LIC_IN_" + padded),
 	}
 }
 

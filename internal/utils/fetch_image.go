@@ -204,6 +204,25 @@ func FetchDriverImage(cfg *config.Config, gateNo string) (string, error) {
 	return b64, nil
 }
 
+func FetchLicensePlateEntranceImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraEntranceLicensePLateHosts(gateNo)
+
+	_, host := pickHost(hosts, []string{
+		"lic_in",
+	})
+
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("license plate host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("license plate fetch failed: %w", err)
+	}
+
+	return b64, nil
+}
+
 // รูปป้ายทะเบียน: host จาก ResolveCameraHosts + path คงที่ (channel 1)
 func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 	hosts := cfg.ResolveCameraHosts(gateNo)

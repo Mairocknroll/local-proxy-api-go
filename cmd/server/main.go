@@ -127,6 +127,7 @@ func main() {
 		v2img := api.Group("/v2-202401/image")
 		{
 			v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
+			v2img.POST("/collect-image-none/:gate_no", image_v2.CollectImageNone(cfg))
 			v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
 		}
 	}
