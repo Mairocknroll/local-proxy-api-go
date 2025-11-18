@@ -17,7 +17,7 @@ import (
 
 // ENV
 var (
-	serverURL   = getenv("SERVER_URL", "")
+	serverURL   = getenv("SERVER_URL", "https://api-pms.jparkdev.co")
 	parkingCode = getenv("PARKING_CODE", "")
 )
 
@@ -112,6 +112,10 @@ func CollectImageNone(cfg *config.Config) gin.HandlerFunc {
 		if in.ParkCode == "" {
 			in.ParkCode = parkingCode
 		}
+		// Set time_stamp ถ้าไม่มี
+		if in.TimeStamp == "" {
+			in.TimeStamp = time.Now().Format(time.RFC3339)
+		}
 
 		// ใน CollectImageNone function
 		// เปลี่ยนจาก sequential เป็น concurrent
@@ -205,5 +209,96 @@ func GetLicensePlatePicture(cfg *config.Config) gin.HandlerFunc {
 			"message": "Success",
 			"data":    lpB64,
 		})
+	}
+}
+
+// CheckoutVehicle เหมือน CollectImageNone แต่ใช้กล้องขาออก (exit) และ gate="ext"
+func CheckoutVehicle(cfg *config.Config) gin.HandlerFunc {
+	reGate := regexp.MustCompile(`^[0-9]+$`)
+	return func(c *gin.Context) {
+		gateNo := c.Param("gate_no")
+		if !reGate.MatchString(gateNo) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "invalid gate number"})
+			return
+		}
+
+		var in UploadImage
+		if err := c.ShouldBindJSON(&in); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": err.Error()})
+			return
+		}
+		in.Gate = "ext" // ขาออก
+		if in.ParkCode == "" {
+			in.ParkCode = parkingCode
+		}
+		// Set time_stamp ถ้าไม่มี
+		if in.TimeStamp == "" {
+			in.TimeStamp = time.Now().Format(time.RFC3339)
+		}
+
+		// ดึงรูปขาออกแบบ concurrent
+		var lprB64, lpB64 string
+		var lprErr, lpErr error
+
+		// ใช้ WaitGroup เพื่อรอให้ทั้ง 2 goroutine เสร็จ
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Fetch LPR exit image (ไปที่ driver_img_base_64)
+		go func() {
+			defer wg.Done()
+			lprB64, lprErr = utils.FetchLprExitImage(cfg, gateNo)
+		}()
+
+		// Fetch license plate exit image
+		go func() {
+			defer wg.Done()
+			lpB64, lpErr = utils.FetchLicensePlateExitImage(cfg, gateNo)
+		}()
+
+		// รอให้ทั้ง 2 fetch เสร็จ
+		wg.Wait()
+
+		// Set driver image (LPR)
+		if lprErr != nil {
+			empty := ""
+			in.DriverImgBase64 = &empty
+		} else {
+			in.DriverImgBase64 = &lprB64
+		}
+
+		// Set license plate image
+		if lpErr != nil {
+			empty := ""
+			in.LicensePlateImgBase64 = &empty
+		} else {
+			in.LicensePlateImgBase64 = &lpB64
+		}
+
+		if serverURL == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": false, "message": "SERVER_URL not configured"})
+			return
+		}
+		url := fmt.Sprintf("%s/api/v1-202401/image/collect-image", serverURL)
+
+		body, _ := json.Marshal(in)
+
+		req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": false, "message": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+
+		var out map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": false, "message": "invalid upstream response"})
+			return
+		}
+		c.JSON(resp.StatusCode, out)
 	}
 }

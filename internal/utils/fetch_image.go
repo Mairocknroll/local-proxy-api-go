@@ -245,6 +245,42 @@ func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 	return b64, nil
 }
 
+// รูป LPR ขาออก: host จาก ResolveCameraHosts (LPR_OUT_XX)
+func FetchLprExitImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraHosts(gateNo)
+	_, host := pickHost(hosts, []string{
+		"lpr_out", "lpr",
+	})
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("lpr exit host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("lpr exit fetch failed: %w", err)
+	}
+
+	return b64, nil
+}
+
+// รูปป้ายทะเบียนขาออก: host จาก ResolveCameraHosts (LIC_OUT_XX)
+func FetchLicensePlateExitImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraHosts(gateNo)
+	_, host := pickHost(hosts, []string{
+		"license_plate_out", "lic", "plate",
+	})
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("license plate exit host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("license plate exit fetch failed: %w", err)
+	}
+
+	return b64, nil
+}
+
 // (optional) ตัวเดิม: ดึงพร้อมกันหลาย host (Digest only) + เขียนไฟล์ลง snapshots
 func FetchImagesHedgeHosts(cfg *config.Config, gateNo string, client *http.Client) map[string]string {
 	hosts := cfg.ResolveCameraHosts(gateNo)

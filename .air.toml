@@ -1,6 +1,9 @@
 [build]
-pre_cmd = "cd cmd/server && swag init -g main.go -o ../../internal/docs"
+pre_cmd = "cd cmd/server && swag init -g main.go -o ../../internal/docs && cd ../.."
 cmd = "go build -o ./tmp/main.exe ./cmd/server/main.go"
 bin = "./tmp/main.exe"
 include_ext = ["go", "yaml", "yml", "env", "toml"]
 exclude_dir = ["tmp", "vendor"]
+# delay เพื่อให้ binary พร้อมก่อนรัน
+delay = 1000
+
