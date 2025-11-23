@@ -254,3 +254,24 @@ func CloseZoning(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "closed", "data": nil})
 }
+
+// OpenBarrierByGate เปิดไม้กั้นตาม direction และ gate (สำหรับเรียกจาก package อื่น)
+func OpenBarrierByGate(direction, gate string) error {
+	if !reDirection.MatchString(direction) {
+		return fmt.Errorf("invalid direction: %s (must be ENT or EXT)", direction)
+	}
+	if !reGate.MatchString(gate) {
+		return fmt.Errorf("invalid gate: %s (must be numeric)", gate)
+	}
+
+	ip := getDeviceIP(direction, gate, "GATE")
+	if ip == "" {
+		return fmt.Errorf("IP not found for gate %s %s", direction, gate)
+	}
+
+	if err := toggleCoil(ip, 1); err != nil {
+		return fmt.Errorf("failed to open barrier: %w", err)
+	}
+
+	return nil
+}

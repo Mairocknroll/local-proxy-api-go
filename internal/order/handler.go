@@ -22,6 +22,7 @@ import (
 
 	digest "github.com/icholy/digest"
 
+	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
@@ -359,6 +360,16 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		log.Printf("[cloud] error: %v", err)
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
+
+	// เปิดไม้กั้นอัตโนมัติเมื่อ status = true
+	if jsonRes != nil && jsonRes["status"] == true {
+		gateNo := c.Query("gate_no")
+		if err := barrier_v2.OpenBarrierByGate("EXT", gateNo); err != nil {
+			log.Printf("Failed to open barrier for gate %s: %v", gateNo, err)
+		} else {
+			log.Printf("Barrier opened automatically for gate %s, plate: %s", gateNo, plate)
+		}
+	}
 
 	// แยกค่า to_pay_amount (กัน type crash)
 	var toPayStr string
