@@ -368,6 +368,13 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 			log.Printf("Failed to open barrier for gate %s: %v", gateNo, err)
 		} else {
 			log.Printf("Barrier opened automatically for gate %s, plate: %s", gateNo, plate)
+
+			// Upload รูปแบบ background
+			if data, ok := jsonRes["data"].(map[string]any); ok {
+				if uuid, ok := data["uuid"].(string); ok && uuid != "" {
+					go h.uploadExitImages(uuid, plate, gateNo)
+				}
+			}
 		}
 	}
 
@@ -514,4 +521,64 @@ func (h *Handler) logTimingsEntrance(c *gin.Context, t0 time.Time, t1, t2, t3, t
 	log.Printf(" - Call API:         %.2fs", t6.Seconds())
 	log.Printf(" - Broadcast:        %.2fs", t7.Seconds())
 	log.Printf(" - Total Time:       %.2fs", time.Since(t0).Seconds())
+}
+
+// uploadExitImages uploads exit images in background
+func (h *Handler) uploadExitImages(uuid, licensePlate, gateNo string) {
+	if uuid == "" || licensePlate == "" || gateNo == "" {
+		log.Printf("uploadExitImages: missing required fields (uuid=%s, plate=%s, gate=%s)", uuid, licensePlate, gateNo)
+		return
+	}
+
+	// Fetch รูปจากกล้องขาออกแบบ concurrent
+	var lprB64, lpB64 string
+	var lprErr, lpErr error
+
+	// Fetch LPR exit image และ license plate exit image แบบ concurrent
+	done := make(chan struct{})
+	go func() {
+		lprB64, lprErr = utils.FetchLprExitImage(h.cfg, gateNo)
+		done <- struct{}{}
+	}()
+	go func() {
+		lpB64, lpErr = utils.FetchLicensePlateExitImage(h.cfg, gateNo)
+		done <- struct{}{}
+	}()
+
+	// รอให้ทั้ง 2 fetch เสร็จ
+	<-done
+	<-done
+
+	// สร้าง payload
+	payload := map[string]any{
+		"uuid":          uuid,
+		"license_plate": licensePlate,
+		"park_code":     h.cfg.ParkingCode,
+		"time_stamp":    time.Now().Format(time.RFC3339),
+		"gate":          "ext", // ขาออก
+	}
+
+	// Set driver image (LPR)
+	if lprErr != nil {
+		payload["driver_img_base_64"] = ""
+		log.Printf("Failed to fetch LPR exit image: %v", lprErr)
+	} else {
+		payload["driver_img_base_64"] = lprB64
+	}
+
+	// Set license plate image
+	if lpErr != nil {
+		payload["license_plate_img_base64"] = ""
+		log.Printf("Failed to fetch license plate exit image: %v", lpErr)
+	} else {
+		payload["license_plate_img_base64"] = lpB64
+	}
+
+	// POST ไปที่ collect-image API
+	url := fmt.Sprintf("%s/api/v1-202401/image/collect-image", h.cfg.ServerURL)
+	if _, err := h.postJSON(url, payload); err != nil {
+		log.Printf("Failed to upload exit images: %v", err)
+	} else {
+		log.Printf("Successfully uploaded exit images for plate: %s, uuid: %s", licensePlate, uuid)
+	}
 }
