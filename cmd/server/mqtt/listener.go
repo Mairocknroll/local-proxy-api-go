@@ -183,11 +183,11 @@ func (l *Listener) toggleZoningBarrier(ip string, open bool, direction string) {
 		if open {
 			coil = 1
 		} else {
-			coil = 2
+			coil = 4
 		}
 	} else {
 		if open {
-			coil = 3
+			coil = 1
 		} else {
 			coil = 4
 		}

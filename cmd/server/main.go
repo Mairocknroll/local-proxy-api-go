@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -47,8 +49,25 @@ func Healthz(c *gin.Context) {
 // @schemes         http
 func main() {
 	// ---------- .env ----------
-	if err := godotenv.Load(); err != nil {
-		log.Println("no .env file found")
+	// ลองโหลด .env จากหลายที่เพื่อรองรับทั้ง direct run และ air
+	cwd, _ := os.Getwd()
+	envPaths := []string{
+		".env",                           // current directory
+		filepath.Join(cwd, ".env"),       // working directory
+		"../../.env",                     // สำหรับกรณี run จาก cmd/server
+		filepath.Join(cwd, "../../.env"), // absolute path to parent
+	}
+
+	envLoaded := false
+	for _, path := range envPaths {
+		if err := godotenv.Load(path); err == nil {
+			log.Printf("[env] loaded from %s", path)
+			envLoaded = true
+			break
+		}
+	}
+	if !envLoaded {
+		log.Println("[env] no .env file found, using system environment variables")
 	}
 
 	// ---------- Context (SIGINT/SIGTERM) ----------
@@ -127,7 +146,9 @@ func main() {
 		v2img := api.Group("/v2-202401/image")
 		{
 			v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
+			v2img.POST("/collect-image-none/:gate_no", image_v2.CollectImageNone(cfg))
 			v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
+			v2img.POST("/checkout-vehicle/:gate_no", image_v2.CheckoutVehicle(cfg))
 		}
 	}
 

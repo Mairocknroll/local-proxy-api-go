@@ -204,6 +204,25 @@ func FetchDriverImage(cfg *config.Config, gateNo string) (string, error) {
 	return b64, nil
 }
 
+func FetchLicensePlateEntranceImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraEntranceLicensePLateHosts(gateNo)
+
+	_, host := pickHost(hosts, []string{
+		"lic_in",
+	})
+
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("license plate host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("license plate fetch failed: %w", err)
+	}
+
+	return b64, nil
+}
+
 // รูปป้ายทะเบียน: host จาก ResolveCameraHosts + path คงที่ (channel 1)
 func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 	hosts := cfg.ResolveCameraHosts(gateNo)
@@ -222,6 +241,42 @@ func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 	_ = os.MkdirAll(snapshotDir, 0o755)
 	raw, _ := base64.StdEncoding.DecodeString(b64)
 	_ = os.WriteFile(filepath.Join(snapshotDir, fmt.Sprintf("%s_%s.jpg", gateNo, key)), raw, 0o644)
+
+	return b64, nil
+}
+
+// รูป LPR ขาออก: host จาก ResolveCameraHosts (LPR_OUT_XX)
+func FetchLprExitImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraHosts(gateNo)
+	_, host := pickHost(hosts, []string{
+		"lpr_out", "lpr",
+	})
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("lpr exit host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("lpr exit fetch failed: %w", err)
+	}
+
+	return b64, nil
+}
+
+// รูปป้ายทะเบียนขาออก: host จาก ResolveCameraHosts (LIC_OUT_XX)
+func FetchLicensePlateExitImage(cfg *config.Config, gateNo string) (string, error) {
+	hosts := cfg.ResolveCameraHosts(gateNo)
+	_, host := pickHost(hosts, []string{
+		"license_plate_out", "lic", "plate",
+	})
+	if strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("license plate exit host not configured (gate=%s)", gateNo)
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err != nil || b64 == "" {
+		return "", fmt.Errorf("license plate exit fetch failed: %w", err)
+	}
 
 	return b64, nil
 }
