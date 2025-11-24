@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"time"
 
 	"GO_LANG_WORKSPACE/internal/ws"
 
@@ -25,15 +27,35 @@ func serveGateWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
 		if err != nil {
 			return
 		}
+
+		const readWait = 60 * time.Second
+		const writeWait = 10 * time.Second // เพิ่ม timeout สำหรับขาส่ง
+
+		conn.SetReadDeadline(time.Now().Add(readWait))
+
+		conn.SetPingHandler(func(appData string) error {
+			// 1. ยืดเวลาตาย (Read Deadline)
+			conn.SetReadDeadline(time.Now().Add(readWait))
+
+			// 2. ⚠️ เพิ่มบรรทัดนี้: ต้องตอบ Pong กลับไปหา Android ด้วย (ตามกฎ WebSocket)
+			err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(writeWait))
+
+			// ถ้าตอบกลับไม่ได้ แสดงว่า Connection มีปัญหา ให้ return error เพื่อจบ Loop
+			if err == websocket.ErrCloseSent {
+				return nil
+			} else if e, ok := err.(net.Error); ok && e.Temporary() {
+				return nil
+			}
+			return err
+		})
+
 		hub.Register(group, conn)
 		defer hub.Unregister(group, conn)
 
 		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
+			if _, _, err := conn.ReadMessage(); err != nil {
 				break
 			}
-			hub.Broadcast(group, msg)
 		}
 	}
 }
@@ -48,15 +70,35 @@ func serveZoningWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
 		if err != nil {
 			return
 		}
+
+		const readWait = 60 * time.Second
+		const writeWait = 10 * time.Second // เพิ่ม timeout สำหรับขาส่ง
+
+		conn.SetReadDeadline(time.Now().Add(readWait))
+
+		conn.SetPingHandler(func(appData string) error {
+			// 1. ยืดเวลาตาย (Read Deadline)
+			conn.SetReadDeadline(time.Now().Add(readWait))
+
+			// 2. ⚠️ เพิ่มบรรทัดนี้: ต้องตอบ Pong กลับไปหา Android ด้วย (ตามกฎ WebSocket)
+			err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(writeWait))
+
+			// ถ้าตอบกลับไม่ได้ แสดงว่า Connection มีปัญหา ให้ return error เพื่อจบ Loop
+			if err == websocket.ErrCloseSent {
+				return nil
+			} else if e, ok := err.(net.Error); ok && e.Temporary() {
+				return nil
+			}
+			return err
+		})
+
 		hub.Register(group, conn)
 		defer hub.Unregister(group, conn)
 
 		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				break
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break // ถ้า Error หรือ Connection หลุด ให้ break ออกจาก Loop เพื่อทำลาย connection
 			}
-			hub.Broadcast(group, msg)
 		}
 	}
 }
