@@ -51,6 +51,24 @@ func (c *Config) ResolveCameraHosts(gateNo string) map[string]string {
 	}
 }
 
+func (c *Config) ResolveCameraLicExitHosts(gateNo string) map[string]string {
+	// ✅ padding gateNo ให้เป็นเลข 2 หลัก เช่น 1 -> "01"
+	padded := fmt.Sprintf("%02s", gateNo)
+
+	return map[string]string{
+		"license_plate_out": os.Getenv("LIC_OUT_" + padded),
+	}
+}
+
+func (c *Config) ResolveCameraLprExitHosts(gateNo string) map[string]string {
+	// ✅ padding gateNo ให้เป็นเลข 2 หลัก เช่น 1 -> "01"
+	padded := fmt.Sprintf("%02s", gateNo)
+
+	return map[string]string{
+		"lpr_out": os.Getenv("LPR_OUT_" + padded),
+	}
+}
+
 func (c *Config) ResolveCameraEntranceHosts(gateNo string) map[string]string {
 	// ✅ padding gateNo ให้เป็นเลข 2 หลัก เช่น 1 -> "01"
 	padded := fmt.Sprintf("%02s", gateNo)

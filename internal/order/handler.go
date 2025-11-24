@@ -251,7 +251,9 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	t0 := time.Now()
 
-	// ---------- Step 1: Validate Request + limit body ----------
+	// =========================================================================
+	// Step 1: Validate Request + limit body
+	// =========================================================================
 	ct := c.GetHeader("Content-Type")
 	mediatype, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediatype, "multipart/") {
@@ -259,16 +261,17 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		return
 	}
 
-	const maxBody = int64(16 << 20) // 16MB รวมทั้ง multipart
+	const maxBody = int64(16 << 20) // 16MB
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBody)
 	defer c.Request.Body.Close()
 
 	mr := multipart.NewReader(c.Request.Body, params["boundary"])
 	t1 := time.Since(t0)
 
-	// ---------- Step 2: Separate Files (เอาเฉพาะ XML; ที่เหลือทิ้ง) ----------
+	// =========================================================================
+	// Step 2: Separate Files (XML only)
+	// =========================================================================
 	var xmlBuf []byte
-
 	parts := 0
 	const maxParts = 10
 
@@ -278,7 +281,6 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			// เจอ error ระหว่างอ่าน (รวม timeout) → จบรีเควสต์ทันที ไม่วนลูป
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
@@ -296,15 +298,13 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 
 		fn := part.FileName()
 		if fn == "" {
-			// form field → ทิ้ง
 			_, _ = io.Copy(io.Discard, part)
 			_ = part.Close()
 			continue
 		}
 
-		// เอาเฉพาะ XML; ที่เหลืออ่านทิ้ง (ไม่ต้องเก็บเข้าหน่วยความจำ)
 		if strings.HasSuffix(strings.ToLower(fn), ".xml") {
-			buf, _ := io.ReadAll(part) // คงพฤติกรรมเดิม = อ่านทั้งก้อน
+			buf, _ := io.ReadAll(part)
 			xmlBuf = buf
 			_ = part.Close()
 		} else {
@@ -319,7 +319,9 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	}
 	t2 := time.Since(t0) - t1
 
-	// ---------- Step 3: Parse XML (มี namespace ก่อน → fallback) ----------
+	// =========================================================================
+	// Step 3: Parse XML
+	// =========================================================================
 	var plate, ip string
 	{
 		var ev eventXML
@@ -340,11 +342,15 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	}
 	t3 := time.Since(t0) - t1 - t2
 
-	// ---------- Step 4: Background Save ----------
+	// =========================================================================
+	// Step 4: Background Save Local Record
+	// =========================================================================
 	go h.postParkingLicensePlate(plate, ip, h.cfg.ParkingCode)
 	t4 := time.Since(t0) - t1 - t2 - t3
 
-	// ---------- Step 5: Call cloud (exit check) ----------
+	// =========================================================================
+	// Step 5: Call Cloud API (Exit Check)
+	// =========================================================================
 	base, _ := url.Parse(h.cfg.ServerURL)
 	base.Path = path.Join(base.Path, "/api/v1-202402/order/license-plate-exit")
 
@@ -354,33 +360,46 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	base.RawQuery = q.Encode()
 
 	exitURL := base.String()
-
 	jsonRes, err := h.getJSON(exitURL)
 	if err != nil {
 		log.Printf("[cloud] error: %v", err)
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
-	// เปิดไม้กั้นอัตโนมัติเมื่อ status = true
+	// เช็คสถานะความสำเร็จ
+	isSuccess := false
 	if jsonRes != nil && jsonRes["status"] == true {
-		gateNo := c.Query("gate_no")
+		isSuccess = true
+	}
+
+	gateNo := c.Query("gate_no")
+
+	// =========================================================================
+	// Step 6: Immediate Action (Open Barrier) if Success
+	// *ทำทันทีเพื่อ UX ที่ดี ไม่ต้องรอรูป*
+	// =========================================================================
+	if isSuccess {
 		if err := barrier_v2.OpenBarrierByGate("EXT", gateNo); err != nil {
 			log.Printf("Failed to open barrier for gate %s: %v", gateNo, err)
 		} else {
 			log.Printf("Barrier opened automatically for gate %s, plate: %s", gateNo, plate)
+		}
 
-			// Upload รูปแบบ background
-			if data, ok := jsonRes["data"].(map[string]any); ok {
-				if uuid, ok := data["uuid"].(string); ok && uuid != "" {
-					go h.uploadExitImages(uuid, plate, gateNo)
-				}
-			}
+		// Handle Valet Case (Return early)
+		if msg, ok := jsonRes["message"].(string); ok && msg == "valet user" {
+			log.Printf("valet user exit %s", plate)
+			c.Status(http.StatusOK)
+			// Log timing แล้วจบเลย
+			h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, 0, 0, plate)
+			return
 		}
 	}
 
-	// แยกค่า to_pay_amount (กัน type crash)
+	// =========================================================================
+	// Step 7: Data Preparation (To Pay Amount)
+	// =========================================================================
 	var toPayStr string
-	if jsonRes != nil && jsonRes["status"] == false {
+	if !isSuccess && jsonRes != nil {
 		if data, ok := jsonRes["data"].(map[string]any); ok {
 			switch v := data["to_pay_amount"].(type) {
 			case string:
@@ -395,57 +414,71 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		}
 	}
 
-	// valet auto-open
-	if jsonRes != nil && jsonRes["status"] == true && jsonRes["message"] == "valet user" {
-		log.Printf("valet user exit %s", plate)
-		c.Status(http.StatusOK)
-		h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, 0, 0, plate)
-		return
-	}
-
-	// ---------- Step 6: Fetch images (concurrent helper) ----------
-	images := utils.FetchImagesHedgeHosts(h.cfg, c.Query("gate_no"), h.camClient)
+	// =========================================================================
+	// Step 8: Fetch Images (Main Thread - Blocking)
+	// *สำคัญ: ดึงรูปตรงนี้ให้เสร็จก่อน เพื่อไม่ให้ชนกับ Background Upload*
+	// =========================================================================
+	images := utils.FetchImagesHedgeHosts(h.cfg, gateNo, h.camClient)
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
-	// ---------- Step 7: Broadcast WebSocket ----------
+	// =========================================================================
+	// Step 9: Broadcast WebSocket
+	// =========================================================================
 	broadcast := make(map[string]any)
-	for k, v := range jsonRes {
-		broadcast[k] = v
+	if jsonRes != nil {
+		for k, v := range jsonRes {
+			broadcast[k] = v
+		}
 	}
+	// เอารูปที่ดึงมาได้ ใส่เข้าไปใน broadcast
 	for k, v := range images {
 		broadcast[k] = v
 	}
 
-	room := "gate_out_" + c.Query("gate_no")
+	room := "gate_out_" + gateNo
 	h.broadcastJSON(room, broadcast)
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
 
-	// ---------- LED ----------
-	gateStr := c.Query("gate_no") // "01", "1", ...
-	gateNoE, err := strconv.Atoi(gateStr)
+	// =========================================================================
+	// Step 10: LED Display
+	// =========================================================================
+	gateNoE, err := strconv.Atoi(gateNo)
 	if err != nil {
-		log.Printf("invalid gate_no %q: %v", gateStr, err)
-		c.String(http.StatusBadRequest, "invalid gate_no")
-		return
-	}
-
-	envKey := fmt.Sprintf("HIK_LED_MAIN_EXT_%02d", gateNoE)
-	value, ok := os.LookupEnv(envKey)
-	if !ok || value == "" {
-		log.Printf("Environment variable %s not found or empty", envKey)
-	}
-
-	line3 := ""
-	if toPayStr != "" {
-		line3 = fmt.Sprintf("%s THB", toPayStr)
-	}
-	if err := utils.DisplayHexData(value, 9999, plate, "ext", "main", line3); err != nil {
-		fmt.Println("Error:", err)
+		log.Printf("invalid gate_no %q for LED: %v", gateNo, err)
 	} else {
-		fmt.Println("Packet sent successfully.")
+		envKey := fmt.Sprintf("HIK_LED_MAIN_EXT_%02d", gateNoE)
+		value, ok := os.LookupEnv(envKey)
+		if !ok || value == "" {
+			log.Printf("Environment variable %s not found or empty", envKey)
+		} else {
+			line3 := ""
+			if toPayStr != "" {
+				line3 = fmt.Sprintf("%s THB", toPayStr)
+			}
+			if err := utils.DisplayHexData(value, 9999, plate, "ext", "main", line3); err != nil {
+				fmt.Println("LED Error:", err)
+			} else {
+				fmt.Println("LED Packet sent successfully.")
+			}
+		}
 	}
 
-	// ---------- Log & Finish ----------
+	// =========================================================================
+	// Step 11: Background Upload (Cloud Save)
+	// *ทำหลังสุด เพื่อให้มั่นใจว่า Step 8 (Fetch Images) คืน resource กล้องแล้ว*
+	// =========================================================================
+	if isSuccess {
+		if data, ok := jsonRes["data"].(map[string]any); ok {
+			if uuid, ok := data["uuid"].(string); ok && uuid != "" {
+				// เรียก goroutine ไปทำงานเบื้องหลัง
+				go h.uploadExitImages(uuid, plate, gateNo)
+			}
+		}
+	}
+
+	// =========================================================================
+	// Finish
+	// =========================================================================
 	h.logTimingsExit(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
 	c.String(http.StatusOK, "File(s) uploaded successfully")
 }

@@ -247,7 +247,7 @@ func FetchLicensePlateImage(cfg *config.Config, gateNo string) (string, error) {
 
 // รูป LPR ขาออก: host จาก ResolveCameraHosts (LPR_OUT_XX)
 func FetchLprExitImage(cfg *config.Config, gateNo string) (string, error) {
-	hosts := cfg.ResolveCameraHosts(gateNo)
+	hosts := cfg.ResolveCameraLprExitHosts(gateNo)
 	_, host := pickHost(hosts, []string{
 		"lpr_out", "lpr",
 	})
@@ -265,7 +265,7 @@ func FetchLprExitImage(cfg *config.Config, gateNo string) (string, error) {
 
 // รูปป้ายทะเบียนขาออก: host จาก ResolveCameraHosts (LIC_OUT_XX)
 func FetchLicensePlateExitImage(cfg *config.Config, gateNo string) (string, error) {
-	hosts := cfg.ResolveCameraHosts(gateNo)
+	hosts := cfg.ResolveCameraLicExitHosts(gateNo)
 	_, host := pickHost(hosts, []string{
 		"license_plate_out", "lic", "plate",
 	})
