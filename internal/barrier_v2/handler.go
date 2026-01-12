@@ -269,3 +269,24 @@ func OpenBarrierByGate(direction, gate string) error {
 
 	return nil
 }
+
+// OpenZoningByGate เปิดไม้กั้น zone ตาม direction และ gate (สำหรับเรียกจาก package อื่น)
+func OpenZoningByGate(direction, gate string) error {
+	if !reDirection.MatchString(direction) {
+		return fmt.Errorf("invalid direction: %s (must be ENT or EXT)", direction)
+	}
+	if !reGate.MatchString(gate) {
+		return fmt.Errorf("invalid gate: %s (must be numeric)", gate)
+	}
+
+	ip := getDeviceIP(direction, gate, "ZONE")
+	if ip == "" {
+		return fmt.Errorf("IP not found for zone %s %s", direction, gate)
+	}
+
+	if err := toggleCoil(ip, 1); err != nil {
+		return fmt.Errorf("failed to open zone barrier: %w", err)
+	}
+
+	return nil
+}

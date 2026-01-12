@@ -6,6 +6,7 @@
 package zoning
 
 import (
+	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
@@ -50,7 +51,7 @@ func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 }
 
 type eventXML struct {
-	XMLName   xml.Name `xml:"EventNotificationAlert"`
+	XMLName   xml.Name `xml:"http://www.isapi.org/ver20/XMLSchema EventNotificationAlert"`
 	UUID      string   `xml:"UUID"`
 	DateTime  string   `xml:"dateTime"`
 	IPAddress string   `xml:"ipAddress"`
@@ -83,7 +84,16 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		c.String(http.StatusBadRequest, "Invalid request")
 		return nil, nil, nil, false
 	}
+
+	// กัน body ใหญ่เกิน (เช่น กล้องส่งรูปบวม/ผิดพลาด) — ป้องกันค้างยาว
+	const maxBody = int64(16 << 20) // 16MB รวมทั้ง multipart
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBody)
+	defer c.Request.Body.Close()
+
 	mr := multipart.NewReader(c.Request.Body, params["boundary"])
+
+	parts := 0
+	const maxParts = 10 // กันลูปไม่รู้จบจาก input แปลก
 
 	for {
 		part, err := mr.NextPart()
@@ -101,9 +111,16 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 			return nil, nil, nil, false
 		}
 
+		parts++
+		if parts > maxParts {
+			_ = part.Close()
+			c.String(http.StatusBadRequest, "too many parts")
+			return nil, nil, nil, false
+		}
+
 		fn := part.FileName()
 		if fn == "" {
-			io.Copy(io.Discard, part)
+			_, _ = io.Copy(io.Discard, part)
 			_ = part.Close()
 			continue
 		}
@@ -212,10 +229,20 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 			"message": "cannot read license plate",
 			"data": map[string]any{
 				"license_plate":            plate,
-				"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
+				"license_plate_img_base64": base64.StdEncoding.EncodeToString(dtImg),
 			},
 		}
 		h.broadcastJSON(room, payload)
+
+		// แสดง LED แม้ plate เป็น unknown
+		gateNoE, _ := strconv.Atoi(gateNo)
+		envKey := fmt.Sprintf("HIK_LED_ZONE_ENT_%02d", gateNoE)
+		if value, ok := os.LookupEnv(envKey); ok && value != "" {
+			if disErr := utils.DisplayHexData(value, 9999, plate, "ent", "zone", fmt.Sprintf("%d THB", 0)); disErr != nil {
+				log.Printf("[LED][ENT][unknown] error: %v", disErr)
+			}
+		}
+
 		h.logZoningTiming("ENT", zoningCode, gateNo, plate, t1, t2, t3, 0, 0, 0, 0, t0)
 		c.String(http.StatusOK, "File(s) uploaded successfully")
 		return
@@ -252,7 +279,7 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 		}
 	}
 
-	// ถ้าสำเร็จ → BG collect-image
+	// ถ้าสำเร็จ → BG collect-image + เปิดไม้กั้น zone
 	if resData != nil && h.boolish(resData["status"]) {
 		u := h.getUUIDFromData(resData)
 
@@ -276,6 +303,13 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 				log.Printf("[collect-image][ENT] err: %v", err)
 			}
 		}()
+
+		// เปิดไม้กั้น zone ทันที
+		if err := barrier_v2.OpenZoningByGate("ENT", gateNo); err != nil {
+			log.Printf("[barrier][ENT] failed to open zone barrier: %v", err)
+		} else {
+			log.Printf("[barrier][ENT] opened zone barrier for plate: %s", plate)
+		}
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
@@ -364,10 +398,20 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 			"message": "cannot read license plate",
 			"data": map[string]any{
 				"license_plate":            plate,
-				"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
+				"license_plate_img_base64": base64.StdEncoding.EncodeToString(dtImg),
 			},
 		}
 		h.broadcastJSON(room, payload)
+
+		// แสดง LED แม้ plate เป็น unknown
+		gateNoE, _ := strconv.Atoi(gateNo)
+		envKey := fmt.Sprintf("HIK_LED_ZONE_EXT_%02d", gateNoE)
+		if value, ok := os.LookupEnv(envKey); ok && value != "" {
+			if disErr := utils.DisplayHexData(value, 9999, plate, "ext", "zone", fmt.Sprintf("%d THB", 0)); disErr != nil {
+				log.Printf("[LED][EXT][unknown] error: %v", disErr)
+			}
+		}
+
 		h.logZoningTiming("EXT", zoningCode, gateNo, plate, t1, t2, t3, 0, 0, 0, 0, t0)
 		c.String(http.StatusOK, "File(s) uploaded successfully")
 		return
@@ -404,7 +448,7 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 		}
 	}
 
-	// ถ้า success → PUT collect-image (payload ใช้ zoning_code เดิม + "gate":"ent" ตาม Python)
+	// ถ้า success → PUT collect-image (payload ใช้ zoning_code เดิม + "gate":"ent" ตาม Python) + เปิดไม้กั้น zone
 	if resData != nil && h.boolish(resData["status"]) {
 		u := h.getUUIDFromData(resData)
 
@@ -427,6 +471,13 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 				log.Printf("[collect-image][EXT] err: %v", err)
 			}
 		}()
+
+		// เปิดไม้กั้น zone ทันที
+		if err := barrier_v2.OpenZoningByGate("EXT", gateNo); err != nil {
+			log.Printf("[barrier][EXT] failed to open zone barrier: %v", err)
+		} else {
+			log.Printf("[barrier][EXT] opened zone barrier for plate: %s", plate)
+		}
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
