@@ -201,9 +201,6 @@ func OpenZoning(c *gin.Context) {
 	}
 
 	coil := 1
-	if direction == "EXT" {
-		coil = 3
-	}
 	if err := toggleCoil(ip, coil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": false, "message": err.Error()})
 		return
@@ -244,10 +241,7 @@ func CloseZoning(c *gin.Context) {
 		return
 	}
 
-	coil := 2
-	if direction == "EXT" {
-		coil = 4
-	}
+	coil := 1
 	if err := toggleCoil(ip, coil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": false, "message": err.Error()})
 		return
