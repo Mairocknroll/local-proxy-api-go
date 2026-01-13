@@ -76,7 +76,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		c.String(http.StatusBadRequest, "Invalid request")
+		c.String(http.StatusOK, "Invalid request")
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
-				c.String(http.StatusBadRequest, "invalid multipart")
+				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
 		}
@@ -115,7 +115,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
-			c.String(http.StatusBadRequest, "too many parts")
+			c.String(http.StatusOK, "too many parts")
 			return
 		}
 
@@ -144,7 +144,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
-		c.String(http.StatusBadRequest, "Missing XML file")
+		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
 	t2 := time.Since(t0) - t1
@@ -172,7 +172,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		}
 	}
 	if plate == "" {
-		c.String(http.StatusBadRequest, "Failed to parse XML")
+		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
 	t3 := time.Since(t0) - t1 - t2
@@ -209,7 +209,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	gateNoE, err := strconv.Atoi(gateStr)
 	if err != nil {
 		log.Printf("invalid gate_no %q: %v", gateStr, err)
-		c.String(http.StatusBadRequest, "invalid gate_no")
+		c.String(http.StatusOK, "invalid gate_no")
 		return
 	}
 
@@ -257,7 +257,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediatype, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediatype, "multipart/") {
-		c.String(http.StatusBadRequest, "Invalid request")
+		c.String(http.StatusOK, "Invalid request")
 		return
 	}
 
@@ -284,7 +284,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
-				c.String(http.StatusBadRequest, "invalid multipart")
+				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
 		}
@@ -292,7 +292,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
-			c.String(http.StatusBadRequest, "too many parts")
+			c.String(http.StatusOK, "too many parts")
 			return
 		}
 
@@ -314,7 +314,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
-		c.String(http.StatusBadRequest, "Missing XML file")
+		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
 	t2 := time.Since(t0) - t1
@@ -337,7 +337,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		}
 	}
 	if plate == "" {
-		c.String(http.StatusBadRequest, "Failed to parse XML")
+		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
 	t3 := time.Since(t0) - t1 - t2

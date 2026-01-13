@@ -81,7 +81,7 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		c.String(http.StatusBadRequest, "Invalid request")
+		c.String(http.StatusOK, "Invalid request")
 		return nil, nil, nil, false
 	}
 
@@ -106,7 +106,7 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
 				log.Println("[Parse Err]", err)
-				c.String(http.StatusBadRequest, "invalid multipart")
+				c.String(http.StatusOK, "invalid multipart")
 			}
 			return nil, nil, nil, false
 		}
@@ -114,7 +114,7 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
-			c.String(http.StatusBadRequest, "too many parts")
+			c.String(http.StatusOK, "too many parts")
 			return nil, nil, nil, false
 		}
 
@@ -137,7 +137,7 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		}
 	}
 	if len(xmlBuf) == 0 {
-		c.String(http.StatusBadRequest, "Missing XML file")
+		c.String(http.StatusOK, "Missing XML file")
 		return nil, nil, nil, false
 	}
 	return xmlBuf, lpImg, dtImg, true
@@ -208,7 +208,7 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	// Step 2: parse XML
 	plate, _, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
 	if !ok {
-		c.String(http.StatusBadRequest, "Failed to parse XML")
+		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
 	t2 := time.Since(t0) - t1
@@ -322,7 +322,7 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	if err != nil {
 		// ถ้าอยาก safety หน่อย:
 		log.Printf("invalid gate_no %q: %v", gateStr, err)
-		c.String(http.StatusBadRequest, "invalid gate_no")
+		c.String(http.StatusOK, "invalid gate_no")
 		return
 	}
 
@@ -376,7 +376,7 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 	// Step 2: parse XML
 	plate, _, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
 	if !ok {
-		c.String(http.StatusBadRequest, "Failed to parse XML")
+		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
 	t2 := time.Since(t0) - t1
@@ -490,7 +490,7 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 	if err != nil {
 		// ถ้าอยาก safety หน่อย:
 		log.Printf("invalid gate_no %q: %v", gateStr, err)
-		c.String(http.StatusBadRequest, "invalid gate_no")
+		c.String(http.StatusOK, "invalid gate_no")
 		return
 	}
 
