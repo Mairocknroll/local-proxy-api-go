@@ -150,7 +150,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	t2 := time.Since(t0) - t1
 
 	// ---------- Step 3: Parse XML (คงตรรกะเดิม) ----------
-	var plate, uuid, timeIn, ip, vehicleType string
+	var plate, uuid, timeIn, ip, vehicleType, provinceId, province string
 	{
 		var ev eventXML
 		if err := xml.Unmarshal(xmlBuf, &ev); err == nil && strings.TrimSpace(ev.ANPR.LicensePlate) != "" {
@@ -159,6 +159,8 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 			timeIn = strings.TrimSpace(ev.DateTime)
 			ip = strings.TrimSpace(ev.IPAddress)
 			vehicleType = strings.TrimSpace(ev.ANPR.VehicleType)
+			provinceId = strings.TrimSpace(ev.ANPR.TailandStateID)
+			province = utils.GetProvince(provinceId)
 		} else {
 			var ev2 eventXMLNoNS
 			if err2 := xml.Unmarshal(xmlBuf, &ev2); err2 == nil && strings.TrimSpace(ev2.ANPR.LicensePlate) != "" {
@@ -168,9 +170,14 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 				ip = strings.TrimSpace(ev2.IPAddress)
 				// คงตรรกะเดิมตามคอมเมนต์ของคุณ
 				vehicleType = strings.TrimSpace(ev.ANPR.VehicleType)
+				provinceId = strings.TrimSpace(ev.ANPR.TailandStateID)
+				province = utils.GetProvince(provinceId)
 			}
 		}
 	}
+
+	log.Printf("[licensePlate][Province]: %v", province)
+
 	if plate == "" {
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
@@ -232,6 +239,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 
 	payload := map[string]any{
 		"license_plate":            plate,
+		"province":                 province,
 		"uuid":                     uuid,
 		"time_in":                  timeIn,
 		"cust_id":                  custID,
@@ -322,16 +330,20 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	// =========================================================================
 	// Step 3: Parse XML
 	// =========================================================================
-	var plate, ip string
+	var plate, ip, provinceId, province string
 	{
 		var ev eventXML
 		if err := xml.Unmarshal(xmlBuf, &ev); err == nil && strings.TrimSpace(ev.ANPR.LicensePlate) != "" {
 			plate = strings.TrimSpace(ev.ANPR.LicensePlate)
+			provinceId = strings.TrimSpace(ev.ANPR.TailandStateID)
+			province = utils.GetProvince(provinceId)
 			ip = strings.TrimSpace(ev.IPAddress)
 		} else {
 			var ev2 eventXMLNoNS
 			if err2 := xml.Unmarshal(xmlBuf, &ev2); err2 == nil && strings.TrimSpace(ev2.ANPR.LicensePlate) != "" {
 				plate = strings.TrimSpace(ev2.ANPR.LicensePlate)
+				provinceId = strings.TrimSpace(ev.ANPR.TailandStateID)
+				province = utils.GetProvince(provinceId)
 				ip = strings.TrimSpace(ev2.IPAddress)
 			}
 		}
@@ -434,6 +446,10 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	for k, v := range images {
 		broadcast[k] = v
 	}
+
+	broadcast["province"] = province
+
+	log.Printf("province %v", province)
 
 	room := "gate_out_" + gateNo
 	h.broadcastJSON(room, broadcast)

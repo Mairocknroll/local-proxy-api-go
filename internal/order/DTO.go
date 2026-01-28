@@ -8,8 +8,9 @@ type eventXML struct {
 	DateTime  string   `xml:"dateTime"`
 	UUID      string   `xml:"UUID"`
 	ANPR      struct {
-		VehicleType  string `xml:"vehicleType"`
-		LicensePlate string `xml:"licensePlate"`
+		VehicleType    string `xml:"vehicleType"`
+		LicensePlate   string `xml:"licensePlate"`
+		TailandStateID string `xml:"tailandStateID"`
 	} `xml:"ANPR"`
 }
 
@@ -20,7 +21,8 @@ type eventXMLNoNS struct {
 	DateTime  string   `xml:"dateTime"`
 	UUID      string   `xml:"UUID"`
 	ANPR      struct {
-		VehicleType  string `xml:"vehicleType"`
-		LicensePlate string `xml:"licensePlate"`
+		VehicleType    string `xml:"vehicleType"`
+		LicensePlate   string `xml:"licensePlate"`
+		TailandStateID string `xml:"tailandStateID"`
 	} `xml:"ANPR"`
 }
