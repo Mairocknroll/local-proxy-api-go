@@ -176,8 +176,6 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		}
 	}
 
-	log.Printf("[licensePlate][Province]: %v", province)
-
 	if plate == "" {
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
@@ -251,7 +249,7 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	h.broadcastJSON(room, payload)
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
 
-	h.logTimingsEntrance(c, t0, t1, t2, t3, t4, t5, t6, t7, plate)
+	h.logTimingsEntrance(c, t0, t1, t2, t3, t4, t5, t6, t7, plate, province)
 	c.String(http.StatusOK, "File(s) uploaded successfully")
 }
 
@@ -572,8 +570,8 @@ func (h *Handler) logTimingsExit(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t
 	log.Printf(" - Total Time:       %.2fs", time.Since(t0).Seconds())
 }
 
-func (h *Handler) logTimingsEntrance(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {
-	log.Printf("[GATE IN %s: LICENSE PLATE: %s]", c.Query("gate_no"), plate)
+func (h *Handler) logTimingsEntrance(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string, province string) {
+	log.Printf("[GATE IN %s: LICENSE PLATE: %s, PROVINCE: %s]", c.Query("gate_no"), plate, province)
 	log.Printf(" - Parse Multipart:  %.2fs", t1.Seconds())
 	log.Printf(" - Split Files:      %.2fs", t2.Seconds())
 	log.Printf(" - Parse XML:        %.2fs", t3.Seconds())
