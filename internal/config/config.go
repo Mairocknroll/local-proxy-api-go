@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,11 @@ type Config struct {
 
 	CameraUser string
 	CameraPass string
+
+	// PD (Parking Data) proxy configuration
+	UsePD          bool   // USE_PD=true จะเปิดใช้งานการส่งข้อมูลไปยัง PD API
+	PDLocalURL     string // PD_LOCAL_URL เช่น http://172.16.93.13:3003
+	PDBarrierToken string // PD_BARRIER_TOKEN สำหรับ authentication
 }
 
 func Load() *Config {
@@ -36,6 +42,11 @@ func Load() *Config {
 
 		CameraUser: getenv("CAMERA_USER", "admin"),
 		CameraPass: getenv("CAMERA_PASS", "Jp@rk1ng"),
+
+		// PD proxy config
+		UsePD:          boolEnv("USE_PD", false),
+		PDLocalURL:     getenv("PD_LOCAL_URL", "http://172.16.93.13:3003"),
+		PDBarrierToken: getenv("PD_BARRIER_TOKEN", ""),
 	}
 }
 
@@ -155,4 +166,20 @@ func durEnv(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+func boolEnv(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	// รองรับ: true, TRUE, 1, yes, YES
+	switch strings.ToLower(v) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return def
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/image_v2"
 	"GO_LANG_WORKSPACE/internal/order"
+	proxypkg "GO_LANG_WORKSPACE/internal/proxy"
 	"GO_LANG_WORKSPACE/internal/ws"
 	zoningpkg "GO_LANG_WORKSPACE/internal/zoning"
 
@@ -149,6 +150,15 @@ func main() {
 			v2img.POST("/collect-image-none/:gate_no", image_v2.CollectImageNone(cfg))
 			v2img.GET("/get-license-plate-picture", image_v2.GetLicensePlatePicture(cfg))
 			v2img.POST("/checkout-vehicle/:gate_no", image_v2.CheckoutVehicle(cfg))
+		}
+
+		// Proxy API (wildcard router สำหรับ forward ไปยัง customer API)
+		// เช่น POST /api/v1/proxy/api/v1/parking-c-logs/in
+		//      POST /api/v1/proxy/api/v1/parking-c-logs/out
+		proxyHandler := proxypkg.NewHandler(cfg.PDLocalURL, cfg.PDBarrierToken)
+		proxyGroup := api.Group("/v1/proxy")
+		{
+			proxyGroup.Any("/*path", proxyHandler.ProxyAny)
 		}
 	}
 

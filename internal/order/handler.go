@@ -480,6 +480,18 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	}
 
 	// =========================================================================
+	// Step 10.5: PD API Integration (เมื่อ USE_PD=true)
+	// ดึงข้อมูล payment-summary แล้วส่งไปยัง PD Local API
+	// =========================================================================
+	if h.cfg.UsePD && isSuccess {
+		if data, ok := jsonRes["data"].(map[string]any); ok {
+			if uuid, ok := data["uuid"].(string); ok && uuid != "" {
+				go h.sendToPDLocalAPI(uuid, plate, gateNo)
+			}
+		}
+	}
+
+	// =========================================================================
 	// Step 11: Background Upload (Cloud Save)
 	// *ทำหลังสุด เพื่อให้มั่นใจว่า Step 8 (Fetch Images) คืน resource กล้องแล้ว*
 	// =========================================================================
@@ -630,4 +642,160 @@ func (h *Handler) uploadExitImages(uuid, licensePlate, gateNo string) {
 	} else {
 		log.Printf("Successfully uploaded exit images for plate: %s, uuid: %s", licensePlate, uuid)
 	}
+}
+
+// sendToPDLocalAPI ดึงข้อมูล payment-summary แล้วส่งไปยัง PD Local API
+// เรียกใช้เมื่อ USE_PD=true และ exit สำเร็จ
+func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
+	// Step 1: GET payment-summary
+	summaryURL := fmt.Sprintf("%s/api/v1-202402/payment/payment-summary?qr_code=%s", h.cfg.ServerURL, qrCode)
+
+	summaryRes, err := h.getJSON(summaryURL)
+	if err != nil {
+		log.Printf("[PD-API] Failed to get payment-summary: %v", err)
+		return
+	}
+
+	if summaryRes == nil {
+		log.Printf("[PD-API] payment-summary returned nil")
+		return
+	}
+
+	// ตรวจสอบ status
+	if status, ok := summaryRes["status"].(bool); !ok || !status {
+		log.Printf("[PD-API] payment-summary status is not success: %v", summaryRes)
+		return
+	}
+
+	// Step 2: Extract data from payment-summary
+	data, ok := summaryRes["data"].(map[string]any)
+	if !ok {
+		log.Printf("[PD-API] payment-summary data is not a map")
+		return
+	}
+
+	// ดึงค่าที่ต้องการ
+	transactionID := ""
+	if v, ok := data["transaction_id"].(string); ok {
+		transactionID = v
+	} else if v, ok := data["uuid"].(string); ok {
+		transactionID = v
+	}
+
+	gateNameIn := ""
+	if v, ok := data["gate_name_in"].(string); ok {
+		gateNameIn = v
+	} else if v, ok := data["gate_in"].(string); ok {
+		gateNameIn = v
+	}
+
+	timeStampIn := ""
+	if v, ok := data["time_stamp_in"].(string); ok {
+		timeStampIn = v
+	} else if v, ok := data["time_in"].(string); ok {
+		timeStampIn = v
+	}
+
+	timeStampOut := ""
+	if v, ok := data["time_stamp_out"].(string); ok {
+		timeStampOut = v
+	} else if v, ok := data["time_out"].(string); ok {
+		timeStampOut = v
+	} else {
+		timeStampOut = time.Now().Format("2006-01-02 15:04:05")
+	}
+
+	durationTime := ""
+	if v, ok := data["duration_time"].(string); ok {
+		durationTime = v
+	} else if v, ok := data["duration"].(string); ok {
+		durationTime = v
+	} else if v, ok := data["duration"].(float64); ok {
+		durationTime = fmt.Sprintf("%.0f", v)
+	}
+
+	typeOfUser := 7 // default
+	if v, ok := data["type_of_user"].(float64); ok {
+		typeOfUser = int(v)
+	} else if v, ok := data["user_type"].(float64); ok {
+		typeOfUser = int(v)
+	}
+
+	serialCard := ""
+	if v, ok := data["serial_card"].(string); ok {
+		serialCard = v
+	} else if v, ok := data["card_serial"].(string); ok {
+		serialCard = v
+	}
+
+	description := ""
+	if v, ok := data["description"].(string); ok {
+		description = v
+	}
+
+	lprLicense := licensePlate
+	if v, ok := data["license_plate"].(string); ok && v != "" {
+		lprLicense = v
+	}
+
+	lprProvince := ""
+	if v, ok := data["province"].(string); ok {
+		lprProvince = v
+	}
+
+	cashAmt := 0.0
+	if v, ok := data["cash_amount"].(float64); ok {
+		cashAmt = v
+	} else if v, ok := data["amount"].(float64); ok {
+		cashAmt = v
+	} else if v, ok := data["to_pay_amount"].(float64); ok {
+		cashAmt = v
+	}
+
+	// Step 3: Build request body for PD API
+	pdPayload := map[string]any{
+		"TransactionID": transactionID,
+		"GateNameIn":    gateNameIn,
+		"GateNameOut":   gateNo,
+		"TimeStampIn":   timeStampIn,
+		"TimeStampOut":  timeStampOut,
+		"DurationTime":  durationTime,
+		"TypeofUser":    typeOfUser,
+		"SerialCard":    serialCard,
+		"Description":   description,
+		"LprLicense":    lprLicense,
+		"LprProvince":   lprProvince,
+		"CashAmt":       cashAmt,
+	}
+
+	// Step 4: POST to PD Local API with Bearer Token
+	pdURL := fmt.Sprintf("%s/api/v1/parking-c-logs/out", h.cfg.PDLocalURL)
+
+	log.Printf("[PD-API] Sending to %s: %+v", pdURL, pdPayload)
+
+	if _, err := h.postJSONWithToken(pdURL, pdPayload, h.cfg.PDBarrierToken); err != nil {
+		log.Printf("[PD-API] Failed to send to PD Local API: %v", err)
+	} else {
+		log.Printf("[PD-API] Successfully sent exit data for plate: %s, txn: %s", licensePlate, transactionID)
+	}
+}
+
+// postJSONWithToken sends a POST request with Bearer token in Authorization header
+func (h *Handler) postJSONWithToken(url string, body map[string]any, token string) (map[string]any, error) {
+	b, _ := json.Marshal(body)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	out := map[string]any{}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return out, nil
 }
