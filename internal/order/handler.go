@@ -673,12 +673,12 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 	}
 
 	// ดึงค่าที่ต้องการ
-	transactionID := ""
-	if v, ok := data["transaction_id"].(string); ok {
-		transactionID = v
-	} else if v, ok := data["uuid"].(string); ok {
-		transactionID = v
-	}
+	transactionID := qrCode
+	// if v, ok := data["transaction_id"].(string); ok {
+	// 	transactionID = v
+	// } else if v, ok := data["uuid"].(string); ok {
+	// 	transactionID = v
+	// }
 
 	gateNameIn := ""
 	if v, ok := data["gate_name_in"].(string); ok {
@@ -710,6 +710,9 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 		durationTime = v
 	} else if v, ok := data["duration"].(float64); ok {
 		durationTime = fmt.Sprintf("%.0f", v)
+	} else if timeStampIn != "" && timeStampOut != "" {
+		// Calculate duration from TimeStampIn and TimeStampOut
+		durationTime = calculateDurationMinutes(timeStampIn, timeStampOut)
 	}
 
 	typeOfUser := 7 // default
@@ -719,12 +722,12 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 		typeOfUser = int(v)
 	}
 
-	serialCard := ""
-	if v, ok := data["serial_card"].(string); ok {
-		serialCard = v
-	} else if v, ok := data["card_serial"].(string); ok {
-		serialCard = v
-	}
+	serialCard := qrCode
+	// if v, ok := data["serial_card"].(string); ok {
+	// 	serialCard = v
+	// } else if v, ok := data["card_serial"].(string); ok {
+	// 	serialCard = v
+	// }
 
 	description := ""
 	if v, ok := data["description"].(string); ok {
@@ -751,12 +754,16 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 	}
 
 	// Step 3: Build request body for PD API
+	// Format timestamps to "YYYY-MM-DD HH:mm:ss" before sending
+	formattedTimeIn := formatTimestamp(timeStampIn)
+	formattedTimeOut := formatTimestamp(timeStampOut)
+
 	pdPayload := map[string]any{
 		"TransactionID": transactionID,
 		"GateNameIn":    gateNameIn,
 		"GateNameOut":   gateNo,
-		"TimeStampIn":   timeStampIn,
-		"TimeStampOut":  timeStampOut,
+		"TimeStampIn":   formattedTimeIn,
+		"TimeStampOut":  formattedTimeOut,
 		"DurationTime":  durationTime,
 		"TypeofUser":    typeOfUser,
 		"SerialCard":    serialCard,
@@ -796,4 +803,91 @@ func (h *Handler) postJSONWithToken(url string, body map[string]any, token strin
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return out, nil
+}
+
+// calculateDurationMinutes parses two timestamps and returns the duration in minutes
+// Supports multiple formats:
+// - 2006-01-02T15:04:05.000000 (ISO 8601 with microseconds)
+// - 2006-01-02T15:04:05 (ISO 8601)
+// - 2006-01-02 15:04:05 (space separator)
+func calculateDurationMinutes(timeIn, timeOut string) string {
+	formats := []string{
+		"2006-01-02T15:04:05.000000",
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	}
+
+	var tIn, tOut time.Time
+	var err error
+
+	// Parse timeIn
+	for _, format := range formats {
+		tIn, err = time.Parse(format, timeIn)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Printf("[Duration] Failed to parse timeIn: %s, error: %v", timeIn, err)
+		return ""
+	}
+
+	// Parse timeOut
+	for _, format := range formats {
+		tOut, err = time.Parse(format, timeOut)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Printf("[Duration] Failed to parse timeOut: %s, error: %v", timeOut, err)
+		return ""
+	}
+
+	// Calculate duration in minutes
+	duration := tOut.Sub(tIn)
+	minutes := int(duration.Minutes())
+	if minutes < 0 {
+		minutes = 0
+	}
+
+	log.Printf("[Duration] Calculated: %d minutes (In: %s, Out: %s)", minutes, timeIn, timeOut)
+	return fmt.Sprintf("%d", minutes)
+}
+
+// formatTimestamp converts various timestamp formats to "YYYY-MM-DD HH:mm:ss"
+// Supports:
+// - 2006-01-02T15:04:05.000000 (ISO 8601 with microseconds)
+// - 2006-01-02T15:04:05 (ISO 8601)
+// - 2006-01-02 15:04:05 (already correct format)
+func formatTimestamp(ts string) string {
+	if ts == "" {
+		return ""
+	}
+
+	formats := []string{
+		"2006-01-02T15:04:05.000000",
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	}
+
+	var parsed time.Time
+	var err error
+
+	for _, format := range formats {
+		parsed, err = time.Parse(format, ts)
+		if err == nil {
+			break
+		}
+	}
+
+	if err != nil {
+		log.Printf("[formatTimestamp] Failed to parse: %s, returning original", ts)
+		return ts // Return original if parsing fails
+	}
+
+	// Format to target: "2006-01-02 15:04:05"
+	return parsed.Format("2006-01-02 15:04:05")
 }
