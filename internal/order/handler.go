@@ -484,7 +484,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	if h.cfg.UsePD && isSuccess {
 		if data, ok := jsonRes["data"].(map[string]any); ok {
 			if uuid, ok := data["uuid"].(string); ok && uuid != "" {
-				go h.sendToPDLocalAPI(uuid, plate, gateNo)
+				go h.sendToPDLocalAPI(uuid, plate, gateNo, province)
 			}
 		}
 	}
@@ -644,7 +644,7 @@ func (h *Handler) uploadExitImages(uuid, licensePlate, gateNo string) {
 
 // sendToPDLocalAPI ดึงข้อมูล payment-summary แล้วส่งไปยัง PD Local API
 // เรียกใช้เมื่อ USE_PD=true และ exit สำเร็จ
-func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
+func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo, province string) {
 	// Step 1: GET payment-summary
 	summaryURL := fmt.Sprintf("%s/api/v1-202402/payment/payment-summary?qr_code=%s", h.cfg.ServerURL, qrCode)
 
@@ -672,20 +672,13 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 		return
 	}
 
-	// ดึงค่าที่ต้องการ
 	transactionID := qrCode
-	// if v, ok := data["transaction_id"].(string); ok {
-	// 	transactionID = v
-	// } else if v, ok := data["uuid"].(string); ok {
-	// 	transactionID = v
-	// }
-
-	gateNameIn := ""
-	if v, ok := data["gate_name_in"].(string); ok {
-		gateNameIn = v
-	} else if v, ok := data["gate_in"].(string); ok {
-		gateNameIn = v
-	}
+	gateNameIn := "1"
+	typeOfUser := 7 // default
+	serialCard := qrCode
+	description := "check out vehicle"
+	lprLicense := licensePlate
+	lprProvince := province
 
 	timeStampIn := ""
 	if v, ok := data["time_stamp_in"].(string); ok {
@@ -715,35 +708,6 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 		durationTime = calculateDurationMinutes(timeStampIn, timeStampOut)
 	}
 
-	typeOfUser := 7 // default
-	if v, ok := data["type_of_user"].(float64); ok {
-		typeOfUser = int(v)
-	} else if v, ok := data["user_type"].(float64); ok {
-		typeOfUser = int(v)
-	}
-
-	serialCard := qrCode
-	// if v, ok := data["serial_card"].(string); ok {
-	// 	serialCard = v
-	// } else if v, ok := data["card_serial"].(string); ok {
-	// 	serialCard = v
-	// }
-
-	description := ""
-	if v, ok := data["description"].(string); ok {
-		description = v
-	}
-
-	lprLicense := licensePlate
-	if v, ok := data["license_plate"].(string); ok && v != "" {
-		lprLicense = v
-	}
-
-	lprProvince := ""
-	if v, ok := data["province"].(string); ok {
-		lprProvince = v
-	}
-
 	cashAmt := 0.0
 	if v, ok := data["cash_amount"].(float64); ok {
 		cashAmt = v
@@ -754,16 +718,12 @@ func (h *Handler) sendToPDLocalAPI(qrCode, licensePlate, gateNo string) {
 	}
 
 	// Step 3: Build request body for PD API
-	// Format timestamps to "YYYY-MM-DD HH:mm:ss" before sending
-	formattedTimeIn := formatTimestamp(timeStampIn)
-	formattedTimeOut := formatTimestamp(timeStampOut)
-
 	pdPayload := map[string]any{
 		"TransactionID": transactionID,
 		"GateNameIn":    gateNameIn,
 		"GateNameOut":   gateNo,
-		"TimeStampIn":   formattedTimeIn,
-		"TimeStampOut":  formattedTimeOut,
+		"TimeStampIn":   timeStampIn,
+		"TimeStampOut":  timeStampOut,
 		"DurationTime":  durationTime,
 		"TypeofUser":    typeOfUser,
 		"SerialCard":    serialCard,
@@ -854,40 +814,4 @@ func calculateDurationMinutes(timeIn, timeOut string) string {
 
 	log.Printf("[Duration] Calculated: %d minutes (In: %s, Out: %s)", minutes, timeIn, timeOut)
 	return fmt.Sprintf("%d", minutes)
-}
-
-// formatTimestamp converts various timestamp formats to "YYYY-MM-DD HH:mm:ss"
-// Supports:
-// - 2006-01-02T15:04:05.000000 (ISO 8601 with microseconds)
-// - 2006-01-02T15:04:05 (ISO 8601)
-// - 2006-01-02 15:04:05 (already correct format)
-func formatTimestamp(ts string) string {
-	if ts == "" {
-		return ""
-	}
-
-	formats := []string{
-		"2006-01-02T15:04:05.000000",
-		"2006-01-02T15:04:05.999999",
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-	}
-
-	var parsed time.Time
-	var err error
-
-	for _, format := range formats {
-		parsed, err = time.Parse(format, ts)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		log.Printf("[formatTimestamp] Failed to parse: %s, returning original", ts)
-		return ts // Return original if parsing fails
-	}
-
-	// Format to target: "2006-01-02 15:04:05"
-	return parsed.Format("2006-01-02 15:04:05")
 }
