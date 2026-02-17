@@ -290,3 +290,26 @@ func OpenZoningByGate(direction, gate string) error {
 
 	return nil
 }
+
+// OpenReserveBarrierByGate เปิดไม้กั้น reserve ตาม direction และ gate
+// ใช้ key เช่น ENT_RESE_01, EXT_RESE_01
+func OpenReserveBarrierByGate(direction, gate string) error {
+	if !reDirection.MatchString(direction) {
+		return fmt.Errorf("invalid direction: %s (must be ENT or EXT)", direction)
+	}
+	if !reGate.MatchString(gate) {
+		return fmt.Errorf("invalid gate: %s (must be numeric)", gate)
+	}
+
+	// ใช้ location = "RESE"
+	ip := getDeviceIP(direction, gate, "RESE")
+	if ip == "" {
+		return fmt.Errorf("IP not found for reserve barrier %s %s", direction, gate)
+	}
+
+	if err := toggleCoil(ip, 1); err != nil {
+		return fmt.Errorf("failed to open reserve barrier: %w", err)
+	}
+
+	return nil
+}

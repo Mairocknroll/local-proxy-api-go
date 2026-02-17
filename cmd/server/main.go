@@ -15,6 +15,7 @@ import (
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/image_v2"
 	"GO_LANG_WORKSPACE/internal/order"
+	"GO_LANG_WORKSPACE/internal/reserve"
 	"GO_LANG_WORKSPACE/internal/ws"
 	zoningpkg "GO_LANG_WORKSPACE/internal/zoning"
 
@@ -104,6 +105,8 @@ func main() {
 
 	// ---------- WebSocket rooms ----------
 	r.GET("/gate-in/:gate_no", serveGateWS(hub, "gate_in"))
+	r.GET("/reserve-in/:gate_no", serveGateWS(hub, "reserve_in"))
+	r.GET("/reserve-out/:gate_no", serveGateWS(hub, "reserve_out"))
 	r.GET("/gate-out/:gate_no", serveGateWS(hub, "gate_out"))
 	r.GET("/zoning/entrance/:zoning_code/:gate_no", serveZoningWS(hub, "entrance"))
 	r.GET("/zoning/exit/:zoning_code/:gate_no", serveZoningWS(hub, "exit"))
@@ -119,6 +122,14 @@ func main() {
 			{
 				orderGroup.POST("/verify-member", Order.VerifyMember)
 				orderGroup.POST("/verify-license-plate-out", Order.VerifyLicensePlateOut)
+			}
+
+			// Reserve
+			Reserve := reserve.NewHandler(cfg, hub)
+			reserveGroup := v1.Group("/reserve")
+			{
+				reserveGroup.POST("/verify-reserve", Reserve.VerifyReserve)
+				reserveGroup.POST("/verify-reserve-exit", Reserve.VerifyReserveExit)
 			}
 
 			// Barrier
