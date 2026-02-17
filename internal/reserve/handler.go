@@ -195,8 +195,8 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 	// NEW LOGIC START
 	apiURL := fmt.Sprintf("%s/api/v1/reserve/entrance-lpr", h.cfg.ServerURL)
 	body := map[string]any{
-		"LicensePlate": plate,
-		"ParkingCode":  h.cfg.ParkingCode,
+		"license_plate": plate,
+		"parking_code":  h.cfg.ParkingCode,
 	}
 
 	// Log always
@@ -218,10 +218,11 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[VerifyReserve] API Response Status: %d, Body: %s", resp.StatusCode, string(respBody))
 
+		// Try to parse json regardless of status code
+		_ = json.Unmarshal(respBody, &jsonRes)
+
 		if resp.StatusCode == 200 {
 			isSuccess = true
-			// Try to parse json if needed for broadcast?
-			_ = json.Unmarshal(respBody, &jsonRes)
 		}
 	}
 
@@ -246,12 +247,24 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 		"time_in":                  timeIn,
 		"vehicle_type":             utils.VehicleType(vehicleType),
 		"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
-		"api_response":             jsonRes, // Add api response to broadcast as requested
+	}
+
+	respPayload := map[string]any{
+		"status":  jsonRes["status"],
+		"message": jsonRes["message"],
+		"data":    payload,
+	}
+
+	log.Printf("[VerifyReserve] payload: %v", respPayload)
+
+	// Merge API response into payload for broadcast
+	for k, v := range jsonRes {
+		payload[k] = v
 	}
 
 	// 4. Broadcast to /reserve-in/:gate_no
 	room := "reserve_in_" + gateNo
-	h.broadcastJSON(room, payload)
+	h.broadcastJSON(room, respPayload)
 
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
 
@@ -371,8 +384,8 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 	// NEW LOGIC START (Exit)
 	apiURL := fmt.Sprintf("%s/api/v1/reserve/exit-lpr", h.cfg.ServerURL)
 	body := map[string]any{
-		"LicensePlate": plate,
-		"ParkingCode":  h.cfg.ParkingCode,
+		"license_plate": plate,
+		"parking_code":  h.cfg.ParkingCode,
 	}
 
 	var jsonRes map[string]any
@@ -392,9 +405,11 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[VerifyReserveExit] API Response Status: %d, Body: %s", resp.StatusCode, string(respBody))
 
+		// Try to parse json regardless of status code
+		_ = json.Unmarshal(respBody, &jsonRes)
+
 		if resp.StatusCode == 200 {
 			isSuccess = true
-			_ = json.Unmarshal(respBody, &jsonRes)
 		}
 	}
 
@@ -419,12 +434,24 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 		"time_in":                  timeIn,
 		"vehicle_type":             utils.VehicleType(vehicleType),
 		"license_plate_img_base64": base64.StdEncoding.EncodeToString(lpImg),
-		"api_response":             jsonRes,
+	}
+
+	respPayload := map[string]any{
+		"status":  jsonRes["status"],
+		"message": jsonRes["message"],
+		"data":    payload,
+	}
+
+	log.Printf("[VerifyReserveOut] payload: %v", respPayload)
+
+	// Merge API response into payload for broadcast
+	for k, v := range jsonRes {
+		payload[k] = v
 	}
 
 	// 4. Broadcast to /reserve-out/:gate_no
 	room := "reserve_out_" + gateNo
-	h.broadcastJSON(room, payload)
+	h.broadcastJSON(room, respPayload)
 
 	t7 := time.Since(t0) - t1 - t2 - t3 - t4 - t5 - t6
 

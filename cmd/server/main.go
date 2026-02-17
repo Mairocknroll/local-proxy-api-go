@@ -128,8 +128,8 @@ func main() {
 			Reserve := reserve.NewHandler(cfg, hub)
 			reserveGroup := v1.Group("/reserve")
 			{
-				reserveGroup.POST("/verify-reserve", Reserve.VerifyReserve)
-				reserveGroup.POST("/verify-reserve-exit", Reserve.VerifyReserveExit)
+				reserveGroup.POST("/entrance", Reserve.VerifyReserve)
+				reserveGroup.POST("/exit", Reserve.VerifyReserveExit)
 			}
 
 			// Barrier
