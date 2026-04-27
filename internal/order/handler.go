@@ -485,6 +485,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		if data, ok := jsonRes["data"].(map[string]any); ok {
 			if uuid, ok := data["uuid"].(string); ok && uuid != "" {
 				go h.sendToPDLocalAPI(uuid, plate, gateNo, province)
+				go h.sendParkingDataToSmartCity(uuid, plate)
 			}
 		}
 	}
@@ -814,4 +815,63 @@ func calculateDurationMinutes(timeIn, timeOut string) string {
 
 	log.Printf("[Duration] Calculated: %d minutes (In: %s, Out: %s)", minutes, timeIn, timeOut)
 	return fmt.Sprintf("%d", minutes)
+}
+
+// sendParkingDataToSmartCity sends data to SmartCityServiceAPI
+func (h *Handler) sendParkingDataToSmartCity(uuid, plate string) {
+	url := "https://172.16.115.94/SmartCityServiceAPI/api/parking/sendparkingdata"
+
+	nowStr := time.Now().Format("02-01-2006 15:04:05")
+
+	payload := map[string]any{
+		"cardnumber":    "123456789",
+		"tranRef":       uuid,
+		"CardCode":      "CM000001",
+		"zoneId":        "Z001",
+		"zoneName":      "Main Parking Zone",
+		"entranceID":    "E001",
+		"entranceName":  "North Gate",
+		"exitID":        "X001",
+		"exitName":      "South Gate",
+		"startDate":     "10-03-2026 11:05:06",
+		"endDate":       nowStr,
+		"cardGroupID":   "1",
+		"cardGroupName": "visitor",
+		"license":       plate,
+		"member_ID":     "M0001",
+		"memberName":    "John Doe",
+	}
+
+	b, _ := json.Marshal(payload)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		log.Printf("[SmartCity-API] Create request failed: %v", err)
+		return
+	}
+
+	req.Header.Set("accept", "*/*")
+	req.Header.Set("Authorization", "Basic YWRtaW46cGFzc3dvcmQxMjM=")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Create custom client to bypass insecure cert error
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   5 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[SmartCity-API] Request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[SmartCity-API] Response %d: %s", resp.StatusCode, string(respBody))
 }
