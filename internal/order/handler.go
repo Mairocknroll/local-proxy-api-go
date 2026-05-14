@@ -383,6 +383,7 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 			log.Printf("Failed to open barrier for gate %s: %v", gateNo, err)
 		} else {
 			log.Printf("Barrier opened automatically for gate %s, plate: %s", gateNo, plate)
+			barrier_v2.TriggerMainSuccessByGate("EXT", gateNo) // ไฟเขียว coil 0
 		}
 
 		// Handle Valet Case (Return early)

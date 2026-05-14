@@ -234,6 +234,7 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 			log.Printf("[VerifyReserve] Open Barrier Error: %v", err)
 		} else {
 			log.Printf("[VerifyReserve] Barrier Opened for gate %s", gateNo)
+			barrier_v2.TriggerReserveSuccessByGate("ENT", gateNo) // ไฟน้ำเงิน coil 2
 		}
 	}
 
@@ -421,6 +422,7 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 			log.Printf("[VerifyReserveExit] Open Barrier Error: %v", err)
 		} else {
 			log.Printf("[VerifyReserveExit] Barrier Opened for gate %s", gateNo)
+			barrier_v2.TriggerReserveSuccessByGate("EXT", gateNo) // ไฟน้ำเงิน coil 2
 		}
 	}
 

@@ -249,6 +249,90 @@ func CloseZoning(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "closed", "data": nil})
 }
 
+// ---------- Trigger Coil (long pulse สำหรับแสดงสี LED สถานะ) ----------
+
+func getModbusTriggerPulse() time.Duration {
+	return time.Duration(getenvInt("MODBUS_TRIGGER_PULSE_MS", 3000)) * time.Millisecond
+}
+
+// triggerCoil เหมือน toggleCoil แต่ใช้ pulse ที่ยาวกว่า (default 3 วินาที)
+func triggerCoil(ip string, coilAddress int) error {
+	addr := fmt.Sprintf("%s:%s", ip, getModbusPort())
+
+	h := modbus.NewTCPClientHandler(addr)
+	h.Timeout = getModbusTimeout()
+	h.SlaveId = getModbusSlaveID()
+
+	if err := h.Connect(); err != nil {
+		return fmt.Errorf("modbus connect: %w", err)
+	}
+	defer h.Close()
+
+	client := modbus.NewClient(h)
+
+	// ON
+	if _, err := client.WriteSingleCoil(uint16(coilAddress), 0xFF00); err != nil {
+		return fmt.Errorf("coil ON: %w", err)
+	}
+	time.Sleep(getModbusTriggerPulse()) // pulse ยาว 3 วินาที
+	// OFF
+	if _, err := client.WriteSingleCoil(uint16(coilAddress), 0x0000); err != nil {
+		return fmt.Errorf("coil OFF: %w", err)
+	}
+	return nil
+}
+
+// TriggerMainSuccessByGate แสดงไฟ เขียว (coil 0) = main สำเร็จ
+// ทำงานแบบ non-blocking (goroutine) ภายใน
+func TriggerMainSuccessByGate(direction, gate string) {
+	go func() {
+		if !reDirection.MatchString(direction) || !reGate.MatchString(gate) {
+			return
+		}
+		ip := getDeviceIP(direction, gate, "GATE")
+		if ip == "" {
+			return
+		}
+		if err := triggerCoil(ip, 0); err != nil {
+			fmt.Printf("[triggerMain] coil 0 (green) error: %v\n", err)
+		}
+	}()
+}
+
+// TriggerZoneSuccessByGate แสดงไฟ ส้ม-เหลือง (coil 3) = zone สำเร็จ
+// ทำงานแบบ non-blocking (goroutine) ภายใน
+func TriggerZoneSuccessByGate(direction, gate string) {
+	go func() {
+		if !reDirection.MatchString(direction) || !reGate.MatchString(gate) {
+			return
+		}
+		ip := getDeviceIP(direction, gate, "ZONE")
+		if ip == "" {
+			return
+		}
+		if err := triggerCoil(ip, 3); err != nil {
+			fmt.Printf("[triggerZone] coil 3 (orange-yellow) error: %v\n", err)
+		}
+	}()
+}
+
+// TriggerReserveSuccessByGate แสดงไฟ น้ำเงิน (coil 2) = reserve สำเร็จ
+// ทำงานแบบ non-blocking (goroutine) ภายใน
+func TriggerReserveSuccessByGate(direction, gate string) {
+	go func() {
+		if !reDirection.MatchString(direction) || !reGate.MatchString(gate) {
+			return
+		}
+		ip := getDeviceIP(direction, gate, "RESE")
+		if ip == "" {
+			return
+		}
+		if err := triggerCoil(ip, 2); err != nil {
+			fmt.Printf("[triggerReserve] coil 2 (blue) error: %v\n", err)
+		}
+	}()
+}
+
 // OpenBarrierByGate เปิดไม้กั้นตาม direction และ gate (สำหรับเรียกจาก package อื่น)
 func OpenBarrierByGate(direction, gate string) error {
 	if !reDirection.MatchString(direction) {

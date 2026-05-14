@@ -309,6 +309,7 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 			log.Printf("[barrier][ENT] failed to open zone barrier: %v", err)
 		} else {
 			log.Printf("[barrier][ENT] opened zone barrier for plate: %s", plate)
+			barrier_v2.TriggerZoneSuccessByGate("ENT", gateNo) // ไฟส้ม-เหลือง coil 3
 		}
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
@@ -477,6 +478,7 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 			log.Printf("[barrier][EXT] failed to open zone barrier: %v", err)
 		} else {
 			log.Printf("[barrier][EXT] opened zone barrier for plate: %s", plate)
+			barrier_v2.TriggerZoneSuccessByGate("EXT", gateNo) // ไฟส้ม-เหลือง coil 3
 		}
 	}
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
