@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"unicode/utf16"
 )
@@ -175,6 +176,15 @@ func AmountHexTo14Bytes(amountHex string) string {
 // DisplayHexData: สร้างเฟรมเฮกซ์แล้วส่ง UDP ตามสูตรเดิม
 // ------------------------------------------------------------
 
+// ledBrandName อ่านชื่อแบรนด์จาก ENV (เปลี่ยนได้ใน .env โดยไม่ต้อง recompile)
+// default = "JPARK"  ตัวอย่าง: LED_BRAND_NAME=SiPH
+func ledBrandName() string {
+	if v := os.Getenv("LED_BRAND_NAME"); v != "" {
+		return v
+	}
+	return "JPARK"
+}
+
 func DisplayHexData(
 	screenIP string,
 	screenPort int,
@@ -183,8 +193,44 @@ func DisplayHexData(
 	stateType string, // "clear" / "main" / ...
 	line3 string,
 ) error {
-	// record1 = "JPARK" ใน UTF-16BE hex
-	record1 := StrToUTF16BEHex("JPARK")
+	// ------------------------------------------------------------
+	// record1: แบรนด์ (บรรทัด 1 ของจอ LED)
+	// ------------------------------------------------------------
+	// โครงสร้างของ section record1 ใน HIK Vision UDP packet (port 9999):
+	//
+	//   Byte offset  Length  Field            หมายเหตุ
+	//   ──────────── ──────  ───────────────  ───────────────────────────────────
+	//   00 01        2       record number    = 1
+	//   XX 00        2       section size LE  = 26 (fixed) + textBytes
+	//   00 00        2       padding
+	//   0e 00        2       record type
+	//   00 00 00     3       x-offset
+	//   3f 00 0f     3       y-offset / height
+	//   ── sub-header (8 bytes) ──
+	//   00 04        2       font size
+	//   00 00        2       padding
+	//   01 00        2       flags
+	//   XX           1       text byte length (= chars × 2, UTF-16BE BMP)
+	//   05           1       speed / effect
+	//   ── extra (4 bytes) ──
+	//   11           1       alignment  (0x11 = center)
+	//   XX           1       text byte length (ซ้ำ)
+	//   00 00        2       padding
+	//   ── text ──
+	//   [UTF-16BE]   XX      brand name bytes
+	//
+	// "JPARK" = 5 chars → textBytes=10 (0x0a), sectionSize=36 (0x24)
+	// "SiPH"  = 4 chars → textBytes=8  (0x08), sectionSize=34 (0x22)
+	// → ถ้าเปลี่ยนชื่อโดยไม่คำนวณ sectionSize/textBytes ใหม่ จอจะ render ผิด
+	//   (นั่นคือสาเหตุที่เดิมต้องเติม space หน้า "SiPH" ให้ครบ 5 ตัว)
+	// ------------------------------------------------------------
+
+	brand := ledBrandName()
+	record1 := StrToUTF16BEHex(brand)
+
+	// คำนวณ byte length แบบ dynamic (BMP rune ทุกตัว = 2 bytes ใน UTF-16BE)
+	textBytes := len([]rune(brand)) * 2 // e.g. "SiPH"→8, "JPARK"→10
+	sectionSize := 26 + textBytes       // 14 (rec-header) + 8 (sub-header) + 4 (extra) = 26 fixed
 
 	// record2: ป้ายทะเบียนไทย (หรือเคลียร์)
 	var record2 string
@@ -217,15 +263,16 @@ func DisplayHexData(
 	}
 
 	// ประกอบแพ็กเก็ตตามสัดส่วนเดิม (อนุญาตมีช่องว่าง/ขึ้นบรรทัด)
+	// record1 section: sectionSize และ textBytes คำนวณจากความยาวจริงของ brand name
 	hexData := fmt.Sprintf(`
 55 aa 00 00 01 00 00 db 00 00
 b9 00 00 00 01 01 b9 00 00 00 01 01 b8 00 00 00
 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00
 
-00 01 24 00 00 00 0e 00 00 00 00 3f 00 0f
-00 04 00 00 01 00 0a 05
-11 0a 00 00
+00 01 %02x 00 00 00 0e 00 00 00 00 3f 00 0f
+00 04 00 00 01 00 %02x 05
+11 %02x 00 00
 %s
 
 00 02 28 00 00 00 0e 00 00 10 00 3f 00 1f
@@ -244,7 +291,7 @@ b9 00 00 00 01 01 b9 00 00 00 01 01 b8 00 00 00
 %s
 
 00 00 00 0d 0a
-`, record1, record2, record3, record4)
+`, sectionSize, textBytes, textBytes, record1, record2, record3, record4)
 
 	// ส่ง UDP
 	if err := SendUDPPacket(screenIP, screenPort, hexData); err != nil {
