@@ -133,7 +133,7 @@ func main() {
 			}
 
 			// Barrier
-			gateGroup := v1.Group("/gate")
+			gateGroup := v1.Group("/gate", config.ApiKeyMiddleware(cfg))
 			{
 				gateGroup.GET("/open-barrier/:direction/:gate", barrier_v2.OpenBarrier)
 				gateGroup.GET("/close-barrier/:direction/:gate", barrier_v2.CloseBarrier)
