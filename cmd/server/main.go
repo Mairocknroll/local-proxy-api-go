@@ -154,7 +154,7 @@ func main() {
 		}
 
 		// Image v2 (อยู่นอก v2-202402 ตามของเดิม)
-		v2img := api.Group("/v2-202401/image")
+		v2img := api.Group("/v2-202401/image", config.ApiKeyMiddleware(cfg))
 		{
 			v2img.POST("/collect-image/:gate_no", image_v2.CollectImage(cfg))
 			v2img.POST("/collect-image-none/:gate_no", image_v2.CollectImageNone(cfg))

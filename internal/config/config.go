@@ -23,6 +23,8 @@ type Config struct {
 
 	CameraUser string
 	CameraPass string
+
+	ImageAPIKey string
 }
 
 func Load() *Config {
@@ -36,6 +38,8 @@ func Load() *Config {
 
 		CameraUser: getenv("CAMERA_USER", "admin"),
 		CameraPass: getenv("CAMERA_PASS", "Jp@rk1ng"),
+
+		ImageAPIKey: getenv("IMAGE_API_KEY", ""),
 	}
 }
 
@@ -119,6 +123,25 @@ func LoggerMiddleware() gin.HandlerFunc {
 		d := time.Since(start)
 		reqID, _ := c.Get("request_id")
 		log.Printf("%s %s %d %s rid=%v", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), d, reqID)
+	}
+}
+
+// ApiKeyMiddleware ตรวจสอบ header X-Api-Key ให้ตรงกับ cfg.ImageAPIKey
+func ApiKeyMiddleware(cfg *Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cfg.ImageAPIKey == "" {
+			// ถ้าไม่ได้ตั้งค่า key ให้ผ่านไปก่อน (backward-compat)
+			c.Next()
+			return
+		}
+		if c.GetHeader("X-Api-Key") != cfg.ImageAPIKey {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "unauthorized: invalid or missing X-Api-Key",
+			})
+			return
+		}
+		c.Next()
 	}
 }
 
