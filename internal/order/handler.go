@@ -24,6 +24,7 @@ import (
 
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
+	"GO_LANG_WORKSPACE/internal/lpr"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
 
@@ -32,14 +33,15 @@ import (
 
 // Handler หลัก
 type Handler struct {
-	cfg        *config.Config
-	hub        *ws.Hub
-	httpClient *http.Client // ไว้ยิง Cloud (transport ปกติ)
-	camClient  *http.Client // ไว้ยิงกล้อง (Digest)
-	deduper    *utils.Deduper
+	cfg         *config.Config
+	hub         *ws.Hub
+	httpClient  *http.Client // ไว้ยิง Cloud (transport ปกติ)
+	camClient   *http.Client // ไว้ยิงกล้อง (Digest)
+	deduper     *utils.Deduper
+	lprObserver *lpr.Observer
 }
 
-func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+func NewHandler(cfg *config.Config, hub *ws.Hub, observers ...*lpr.Observer) *Handler {
 	// client สำหรับ Cloud / API ภายนอก
 	httpCli := &http.Client{
 		Timeout:   6 * time.Second,
@@ -59,13 +61,18 @@ func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 		Timeout:   5 * time.Second, // อิง SNAPSHOT_TIMEOUT_MS ~ 5000
 		Transport: camDT,
 	}
+	var observer *lpr.Observer
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
 
 	return &Handler{
-		cfg:        cfg,
-		hub:        hub,
-		httpClient: httpCli,
-		camClient:  camCli,
-		deduper:    utils.NewDeduper(30 * time.Second),
+		cfg:         cfg,
+		hub:         hub,
+		httpClient:  httpCli,
+		camClient:   camCli,
+		deduper:     utils.NewDeduper(30 * time.Second),
+		lprObserver: observer,
 	}
 }
 
@@ -76,6 +83,11 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "order.verify-member",
+			Direction:      "ENT",
+			MultipartError: fmt.Errorf("invalid multipart content-type: %s", ct),
+		})
 		c.String(http.StatusOK, "Invalid request")
 		return
 	}
@@ -105,8 +117,18 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 			// เจอ error ระหว่างอ่าน (รวม timeout) → จบรีเควสต์ทันที
 			// ใช้ 408 ถ้าดูเหมือน timeout, นอกนั้น 400
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "order.verify-member",
+					Direction:      "ENT",
+					MultipartError: err,
+				})
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "order.verify-member",
+					Direction:      "ENT",
+					MultipartError: err,
+				})
 				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
@@ -115,6 +137,11 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
+			h.observeLPR(c, lpr.ObserveInput{
+				Endpoint:       "order.verify-member",
+				Direction:      "ENT",
+				MultipartError: fmt.Errorf("too many multipart parts"),
+			})
 			c.String(http.StatusOK, "too many parts")
 			return
 		}
@@ -144,6 +171,11 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "order.verify-member",
+			Direction:      "ENT",
+			MultipartError: fmt.Errorf("missing XML file"),
+		})
 		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
@@ -172,6 +204,11 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 		}
 	}
 	if plate == "" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "order.verify-member",
+			Direction:  "ENT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -198,6 +235,17 @@ func (h *Handler) VerifyMember(c *gin.Context) {
 	if err != nil {
 		log.Printf("[Step6][cloud] error: %v", err)
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:      "order.verify-member",
+		Direction:     "ENT",
+		GateNo:        gateNo,
+		CameraIP:      ip,
+		UUID:          uuid,
+		PlateText:     plate,
+		RawPlateText:  plate,
+		VehicleType:   vehicleType,
+		UpstreamError: err,
+	})
 	var custID, efID any
 	if jsonRes != nil {
 		custID = jsonRes["cust_id"]
@@ -257,6 +305,11 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediatype, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediatype, "multipart/") {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "order.verify-license-plate-out",
+			Direction:      "EXT",
+			MultipartError: fmt.Errorf("invalid multipart content-type: %s", ct),
+		})
 		c.String(http.StatusOK, "Invalid request")
 		return
 	}
@@ -282,8 +335,18 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		}
 		if err != nil {
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "order.verify-license-plate-out",
+					Direction:      "EXT",
+					MultipartError: err,
+				})
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "order.verify-license-plate-out",
+					Direction:      "EXT",
+					MultipartError: err,
+				})
 				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
@@ -292,6 +355,11 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
+			h.observeLPR(c, lpr.ObserveInput{
+				Endpoint:       "order.verify-license-plate-out",
+				Direction:      "EXT",
+				MultipartError: fmt.Errorf("too many multipart parts"),
+			})
 			c.String(http.StatusOK, "too many parts")
 			return
 		}
@@ -314,6 +382,11 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "order.verify-license-plate-out",
+			Direction:      "EXT",
+			MultipartError: fmt.Errorf("missing XML file"),
+		})
 		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
@@ -322,21 +395,30 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	// =========================================================================
 	// Step 3: Parse XML
 	// =========================================================================
-	var plate, ip string
+	var plate, ip, uuid, vehicleType string
 	{
 		var ev eventXML
 		if err := xml.Unmarshal(xmlBuf, &ev); err == nil && strings.TrimSpace(ev.ANPR.LicensePlate) != "" {
 			plate = strings.TrimSpace(ev.ANPR.LicensePlate)
 			ip = strings.TrimSpace(ev.IPAddress)
+			uuid = strings.TrimSpace(ev.UUID)
+			vehicleType = strings.TrimSpace(ev.ANPR.VehicleType)
 		} else {
 			var ev2 eventXMLNoNS
 			if err2 := xml.Unmarshal(xmlBuf, &ev2); err2 == nil && strings.TrimSpace(ev2.ANPR.LicensePlate) != "" {
 				plate = strings.TrimSpace(ev2.ANPR.LicensePlate)
 				ip = strings.TrimSpace(ev2.IPAddress)
+				uuid = strings.TrimSpace(ev2.UUID)
+				vehicleType = strings.TrimSpace(ev2.ANPR.VehicleType)
 			}
 		}
 	}
 	if plate == "" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "order.verify-license-plate-out",
+			Direction:  "EXT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -364,6 +446,17 @@ func (h *Handler) VerifyLicensePlateOut(c *gin.Context) {
 	if err != nil {
 		log.Printf("[cloud] error: %v", err)
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:      "order.verify-license-plate-out",
+		Direction:     "EXT",
+		GateNo:        c.Query("gate_no"),
+		CameraIP:      ip,
+		UUID:          uuid,
+		PlateText:     plate,
+		RawPlateText:  plate,
+		VehicleType:   vehicleType,
+		UpstreamError: err,
+	})
 	t5 := time.Since(t0) - t1 - t2 - t3 - t4
 
 	// เช็คสถานะความสำเร็จ
@@ -530,6 +623,21 @@ func (h *Handler) getJSON(url string) (map[string]any, error) {
 func (h *Handler) broadcastJSON(room string, payload map[string]any) {
 	b, _ := json.Marshal(payload)
 	h.hub.Broadcast(room, b)
+}
+
+func (h *Handler) observeLPR(c *gin.Context, input lpr.ObserveInput) {
+	if h.lprObserver == nil {
+		return
+	}
+	if input.GateNo == "" {
+		input.GateNo = c.Query("gate_no")
+	}
+	if input.RequestID == "" {
+		if rid, ok := c.Get("request_id"); ok {
+			input.RequestID = fmt.Sprint(rid)
+		}
+	}
+	h.lprObserver.ObserveHook(c.Request.Context(), input)
 }
 
 func (h *Handler) logTimingsExit(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {

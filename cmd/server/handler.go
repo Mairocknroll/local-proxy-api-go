@@ -60,6 +60,39 @@ func serveGateWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
 	}
 }
 
+func serveFixedWS(hub *ws.Hub, group string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			return
+		}
+
+		const readWait = 60 * time.Second
+		const writeWait = 10 * time.Second
+
+		conn.SetReadDeadline(time.Now().Add(readWait))
+		conn.SetPingHandler(func(appData string) error {
+			conn.SetReadDeadline(time.Now().Add(readWait))
+			err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(writeWait))
+			if err == websocket.ErrCloseSent {
+				return nil
+			} else if e, ok := err.(net.Error); ok && e.Temporary() {
+				return nil
+			}
+			return err
+		})
+
+		hub.Register(group, conn)
+		defer hub.Unregister(group, conn)
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break
+			}
+		}
+	}
+}
+
 func serveZoningWS(hub *ws.Hub, prefix string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		zoningCode := c.Param("zoning_code")

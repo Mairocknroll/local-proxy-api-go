@@ -14,6 +14,7 @@ import (
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
 	"GO_LANG_WORKSPACE/internal/image_v2"
+	"GO_LANG_WORKSPACE/internal/lpr"
 	"GO_LANG_WORKSPACE/internal/order"
 	"GO_LANG_WORKSPACE/internal/reserve"
 	"GO_LANG_WORKSPACE/internal/ws"
@@ -91,6 +92,12 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
+	// ---------- LPR monitor observer ----------
+	lprStore := lpr.NewMemoryStore(500)
+	lprObserver := lpr.NewObserver(lprStore, hub, cfg.LPRMonitorEnabled)
+	lprSnapshotService := lpr.NewCameraSnapshotService(cfg)
+	lprCloudClient := lpr.NewCloudClient(cfg.ServerURL)
+
 	// ---------- Gin ----------
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -110,6 +117,7 @@ func main() {
 	r.GET("/gate-out/:gate_no", serveGateWS(hub, "gate_out"))
 	r.GET("/zoning/entrance/:zoning_code/:gate_no", serveZoningWS(hub, "entrance"))
 	r.GET("/zoning/exit/:zoning_code/:gate_no", serveZoningWS(hub, "exit"))
+	r.GET("/ws/lpr-monitor", serveFixedWS(hub, lpr.MonitorGroup))
 
 	// ---------- API group ----------
 	api := r.Group("/api")
@@ -117,7 +125,7 @@ func main() {
 		v1 := api.Group("/v2-202402")
 		{
 			// Order
-			Order := order.NewHandler(cfg, hub)
+			Order := order.NewHandler(cfg, hub, lprObserver)
 			orderGroup := v1.Group("/order")
 			{
 				orderGroup.POST("/verify-member", Order.VerifyMember)
@@ -125,11 +133,28 @@ func main() {
 			}
 
 			// Reserve
-			Reserve := reserve.NewHandler(cfg, hub)
+			Reserve := reserve.NewHandler(cfg, hub, lprObserver)
 			reserveGroup := v1.Group("/reserve")
 			{
 				reserveGroup.POST("/entrance", Reserve.VerifyReserve)
 				reserveGroup.POST("/exit", Reserve.VerifyReserveExit)
+			}
+
+			// LPR Monitor
+			lprHandler := lpr.NewHandler(lprStore, lprObserver, lprSnapshotService, hub, lprCloudClient, cfg.ParkingCode, cfg.LPRRescueToKioskEnabled, cfg.LPRRescueWindow)
+			lprGroup := v1.Group("/lpr")
+			{
+				lprGroup.GET("/events/recent", lprHandler.RecentEvents)
+				lprGroup.GET("/events/pending", lprHandler.PendingReviews)
+				lprGroup.POST("/events/:eventId/snapshot", lprHandler.CaptureEventSnapshot)
+				lprGroup.POST("/events/:eventId/confirm", lprHandler.ConfirmEvent)
+				lprGroup.GET("/cameras/status", lprHandler.CameraStatuses)
+				lprGroup.POST("/cameras/:cameraId/snapshot", lprHandler.CaptureCameraSnapshot)
+				lprGroup.POST("/pending/:pendingId/claim", lprHandler.ClaimPending)
+				lprGroup.POST("/pending/:pendingId/release", lprHandler.ReleasePending)
+				lprGroup.POST("/pending/:pendingId/reject", lprHandler.RejectPending)
+				lprGroup.POST("/pending/:pendingId/rescue-to-kiosk", lprHandler.RescueToKiosk)
+				lprGroup.GET("/manual-corrections/recent", lprHandler.ManualCorrections)
 			}
 
 			// Barrier
@@ -142,7 +167,7 @@ func main() {
 			}
 
 			// Zoning
-			zn := zoningpkg.NewHandler(cfg, hub)
+			zn := zoningpkg.NewHandler(cfg, hub, lprObserver)
 			routeZoning := v1.Group("/zoning")
 			{
 				routeZoning.POST("/entrance/:zoning_code", zn.ZoningEntrance)

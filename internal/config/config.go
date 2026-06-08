@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,10 @@ type Config struct {
 	CameraUser string
 	CameraPass string
 
-	ImageAPIKey string
+	ImageAPIKey             string
+	LPRMonitorEnabled       bool
+	LPRRescueToKioskEnabled bool
+	LPRRescueWindow         time.Duration
 }
 
 func Load() *Config {
@@ -39,7 +43,10 @@ func Load() *Config {
 		CameraUser: getenv("CAMERA_USER", "admin"),
 		CameraPass: getenv("CAMERA_PASS", "Jp@rk1ng"),
 
-		ImageAPIKey: getenv("IMAGE_API_KEY", ""),
+		ImageAPIKey:             getenv("IMAGE_API_KEY", ""),
+		LPRMonitorEnabled:       boolEnv("LPR_MONITOR_ENABLED", true),
+		LPRRescueToKioskEnabled: boolEnv("LPR_RESCUE_TO_KIOSK_ENABLED", true),
+		LPRRescueWindow:         time.Duration(intEnv("LPR_RESCUE_WINDOW_SECONDS", 30)) * time.Second,
 	}
 }
 
@@ -175,6 +182,28 @@ func durEnv(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return def
+}
+
+func boolEnv(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "yes", "y", "on":
+			return true
+		case "0", "false", "no", "n", "off":
+			return false
+		}
+	}
+	return def
+}
+
+func intEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
 		}
 	}
 	return def

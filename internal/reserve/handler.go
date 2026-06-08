@@ -20,6 +20,7 @@ import (
 
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
+	"GO_LANG_WORKSPACE/internal/lpr"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
 
@@ -50,13 +51,14 @@ type eventXMLNoNS struct {
 }
 
 type Handler struct {
-	cfg        *config.Config
-	hub        *ws.Hub
-	httpClient *http.Client
-	camClient  *http.Client
+	cfg         *config.Config
+	hub         *ws.Hub
+	httpClient  *http.Client
+	camClient   *http.Client
+	lprObserver *lpr.Observer
 }
 
-func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+func NewHandler(cfg *config.Config, hub *ws.Hub, observers ...*lpr.Observer) *Handler {
 	httpCli := &http.Client{
 		Timeout:   6 * time.Second,
 		Transport: config.NewHTTPTransport(),
@@ -74,12 +76,17 @@ func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 		Timeout:   5 * time.Second,
 		Transport: camDT,
 	}
+	var observer *lpr.Observer
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
 
 	return &Handler{
-		cfg:        cfg,
-		hub:        hub,
-		httpClient: httpCli,
-		camClient:  camCli,
+		cfg:         cfg,
+		hub:         hub,
+		httpClient:  httpCli,
+		camClient:   camCli,
+		lprObserver: observer,
 	}
 }
 
@@ -91,6 +98,11 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "reserve.entrance",
+			Direction:      "ENT",
+			MultipartError: fmt.Errorf("invalid multipart content-type: %s", ct),
+		})
 		c.String(http.StatusOK, "Invalid request")
 		return
 	}
@@ -117,8 +129,18 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 		}
 		if err != nil {
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "reserve.entrance",
+					Direction:      "ENT",
+					MultipartError: err,
+				})
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "reserve.entrance",
+					Direction:      "ENT",
+					MultipartError: err,
+				})
 				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
@@ -127,6 +149,11 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
+			h.observeLPR(c, lpr.ObserveInput{
+				Endpoint:       "reserve.entrance",
+				Direction:      "ENT",
+				MultipartError: fmt.Errorf("too many multipart parts"),
+			})
 			c.String(http.StatusOK, "too many parts")
 			return
 		}
@@ -153,6 +180,11 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "reserve.entrance",
+			Direction:      "ENT",
+			MultipartError: fmt.Errorf("missing XML file"),
+		})
 		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
@@ -180,6 +212,11 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 		}
 	}
 	if plate == "" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "reserve.entrance",
+			Direction:  "ENT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -225,6 +262,17 @@ func (h *Handler) VerifyReserve(c *gin.Context) {
 			isSuccess = true
 		}
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:      "reserve.entrance",
+		Direction:     "ENT",
+		GateNo:        gateNo,
+		CameraIP:      ip,
+		UUID:          uuid,
+		PlateText:     plate,
+		RawPlateText:  plate,
+		VehicleType:   vehicleType,
+		UpstreamError: err,
+	})
 
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
@@ -280,6 +328,11 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "reserve.exit",
+			Direction:      "EXT",
+			MultipartError: fmt.Errorf("invalid multipart content-type: %s", ct),
+		})
 		c.String(http.StatusOK, "Invalid request")
 		return
 	}
@@ -306,8 +359,18 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 		}
 		if err != nil {
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "reserve.exit",
+					Direction:      "EXT",
+					MultipartError: err,
+				})
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       "reserve.exit",
+					Direction:      "EXT",
+					MultipartError: err,
+				})
 				c.String(http.StatusOK, "invalid multipart")
 			}
 			return
@@ -316,6 +379,11 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
+			h.observeLPR(c, lpr.ObserveInput{
+				Endpoint:       "reserve.exit",
+				Direction:      "EXT",
+				MultipartError: fmt.Errorf("too many multipart parts"),
+			})
 			c.String(http.StatusOK, "too many parts")
 			return
 		}
@@ -342,6 +410,11 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 	}
 
 	if len(xmlBuf) == 0 {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       "reserve.exit",
+			Direction:      "EXT",
+			MultipartError: fmt.Errorf("missing XML file"),
+		})
 		c.String(http.StatusOK, "Missing XML file")
 		return
 	}
@@ -369,6 +442,11 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 		}
 	}
 	if plate == "" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "reserve.exit",
+			Direction:  "EXT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -412,6 +490,17 @@ func (h *Handler) VerifyReserveExit(c *gin.Context) {
 			isSuccess = true
 		}
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:      "reserve.exit",
+		Direction:     "EXT",
+		GateNo:        gateNo,
+		CameraIP:      ip,
+		UUID:          uuid,
+		PlateText:     plate,
+		RawPlateText:  plate,
+		VehicleType:   vehicleType,
+		UpstreamError: err,
+	})
 
 	t6 := time.Since(t0) - t1 - t2 - t3 - t4 - t5
 
@@ -492,6 +581,21 @@ func (h *Handler) postJSON(url string, body map[string]any) (map[string]any, err
 func (h *Handler) broadcastJSON(room string, payload map[string]any) {
 	b, _ := json.Marshal(payload)
 	h.hub.Broadcast(room, b)
+}
+
+func (h *Handler) observeLPR(c *gin.Context, input lpr.ObserveInput) {
+	if h.lprObserver == nil {
+		return
+	}
+	if input.GateNo == "" {
+		input.GateNo = c.Query("gate_no")
+	}
+	if input.RequestID == "" {
+		if rid, ok := c.Get("request_id"); ok {
+			input.RequestID = fmt.Sprint(rid)
+		}
+	}
+	h.lprObserver.ObserveHook(c.Request.Context(), input)
 }
 
 func (h *Handler) logTimingsEntrance(c *gin.Context, t0 time.Time, t1, t2, t3, t4, t5, t6, t7 time.Duration, plate string) {

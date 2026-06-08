@@ -282,6 +282,27 @@ func FetchLicensePlateExitImage(cfg *config.Config, gateNo string) (string, erro
 }
 
 // (optional) ตัวเดิม: ดึงพร้อมกันหลาย host (Digest only) + เขียนไฟล์ลง snapshots
+func FetchLprSnapshotFromHost(cfg *config.Config, host string) (string, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", fmt.Errorf("camera host is empty")
+	}
+
+	b64, _, err := tryFetchExact(host, lprSnapshotPath, cfg.CameraUser, cfg.CameraPass)
+	if err == nil && b64 != "" {
+		return b64, nil
+	}
+
+	b64, _, fallbackErr := tryFetchAll(host, cfg.CameraUser, cfg.CameraPass)
+	if fallbackErr != nil {
+		return "", fmt.Errorf("snapshot fetch failed exact=%v fallback=%w", err, fallbackErr)
+	}
+	if b64 == "" {
+		return "", fmt.Errorf("snapshot fetch returned empty image")
+	}
+	return b64, nil
+}
+
 func FetchImagesHedgeHosts(cfg *config.Config, gateNo string, client *http.Client) map[string]string {
 	hosts := cfg.ResolveCameraHosts(gateNo)
 	out := make(map[string]string, len(hosts))

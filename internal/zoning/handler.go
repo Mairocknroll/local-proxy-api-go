@@ -8,6 +8,7 @@ package zoning
 import (
 	"GO_LANG_WORKSPACE/internal/barrier_v2"
 	"GO_LANG_WORKSPACE/internal/config"
+	"GO_LANG_WORKSPACE/internal/lpr"
 	"GO_LANG_WORKSPACE/internal/utils"
 	"GO_LANG_WORKSPACE/internal/ws"
 	"bytes"
@@ -32,13 +33,18 @@ import (
 )
 
 type Handler struct {
-	cfg        *config.Config
-	hub        *ws.Hub
-	httpClient *http.Client
-	deduper    *utils.Deduper
+	cfg         *config.Config
+	hub         *ws.Hub
+	httpClient  *http.Client
+	deduper     *utils.Deduper
+	lprObserver *lpr.Observer
 }
 
-func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+func NewHandler(cfg *config.Config, hub *ws.Hub, observers ...*lpr.Observer) *Handler {
+	var observer *lpr.Observer
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
 	return &Handler{
 		cfg: cfg,
 		hub: hub,
@@ -46,7 +52,8 @@ func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 			Timeout:   6 * time.Second,
 			Transport: config.NewHTTPTransport(),
 		},
-		deduper: utils.NewDeduper(30 * time.Second),
+		deduper:     utils.NewDeduper(30 * time.Second),
+		lprObserver: observer,
 	}
 }
 
@@ -77,10 +84,15 @@ type eventXMLNoNS struct {
 // Helpers (ยึดสไตล์ไฟล์ order เดิม)
 // ------------------------------------------------------------
 
-func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg []byte, ok bool) {
+func (h *Handler) parseMultipartExpectXML(c *gin.Context, endpoint, direction string) (xmlBuf, lpImg, dtImg []byte, ok bool) {
 	ct := c.GetHeader("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       endpoint,
+			Direction:      direction,
+			MultipartError: fmt.Errorf("invalid multipart content-type: %s", ct),
+		})
 		c.String(http.StatusOK, "Invalid request")
 		return nil, nil, nil, false
 	}
@@ -103,9 +115,19 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		if err != nil {
 			// <-- เปลี่ยนจาก log แล้ว continue เป็น "ตอบกลับ + return" ทันที
 			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       endpoint,
+					Direction:      direction,
+					MultipartError: err,
+				})
 				c.String(http.StatusRequestTimeout, "multipart read timeout")
 			} else {
 				log.Println("[Parse Err]", err)
+				h.observeLPR(c, lpr.ObserveInput{
+					Endpoint:       endpoint,
+					Direction:      direction,
+					MultipartError: err,
+				})
 				c.String(http.StatusOK, "invalid multipart")
 			}
 			return nil, nil, nil, false
@@ -114,6 +136,11 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		parts++
 		if parts > maxParts {
 			_ = part.Close()
+			h.observeLPR(c, lpr.ObserveInput{
+				Endpoint:       endpoint,
+				Direction:      direction,
+				MultipartError: fmt.Errorf("too many multipart parts"),
+			})
 			c.String(http.StatusOK, "too many parts")
 			return nil, nil, nil, false
 		}
@@ -137,6 +164,11 @@ func (h *Handler) parseMultipartExpectXML(c *gin.Context) (xmlBuf, lpImg, dtImg 
 		}
 	}
 	if len(xmlBuf) == 0 {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:       endpoint,
+			Direction:      direction,
+			MultipartError: fmt.Errorf("missing XML file"),
+		})
 		c.String(http.StatusOK, "Missing XML file")
 		return nil, nil, nil, false
 	}
@@ -199,15 +231,20 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	t0 := time.Now()
 
 	// Step 1: multipart
-	xmlBuf, lpImg, dtImg, ok := h.parseMultipartExpectXML(c)
+	xmlBuf, lpImg, dtImg, ok := h.parseMultipartExpectXML(c, "zoning.entrance", "ENT")
 	if !ok {
 		return
 	}
 	t1 := time.Since(t0)
 
 	// Step 2: parse XML
-	plate, _, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
+	plate, uuid, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
 	if !ok {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "zoning.entrance",
+			Direction:  "ENT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -224,6 +261,16 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 	room := fmt.Sprintf("entrance:%s:%s", zoningCode, gateNo)
 
 	if plate == "unknown" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:     "zoning.entrance",
+			Direction:    "ENT",
+			GateNo:       gateNo,
+			CameraIP:     ip,
+			UUID:         uuid,
+			PlateText:    plate,
+			RawPlateText: plate,
+			VehicleType:  vehicleType,
+		})
 		payload := map[string]any{
 			"status":  false,
 			"message": "cannot read license plate",
@@ -263,10 +310,31 @@ func (h *Handler) ZoningEntrance(c *gin.Context) {
 
 	resData, err := h.postJSON(transitionURL, reqBody)
 	if err != nil {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:      "zoning.entrance",
+			Direction:     "ENT",
+			GateNo:        gateNo,
+			CameraIP:      ip,
+			UUID:          uuid,
+			PlateText:     plate,
+			RawPlateText:  plate,
+			VehicleType:   vehicleType,
+			UpstreamError: err,
+		})
 		log.Printf("[transition][ENT] error: %v", err)
 		c.String(http.StatusBadGateway, "transition failed")
 		return
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:     "zoning.entrance",
+		Direction:    "ENT",
+		GateNo:       gateNo,
+		CameraIP:     ip,
+		UUID:         uuid,
+		PlateText:    plate,
+		RawPlateText: plate,
+		VehicleType:  vehicleType,
+	})
 	t4 := time.Since(t0) - t1 - t2 - t3
 
 	// เติม base64 รูปป้ายเข้า data
@@ -367,15 +435,20 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 	t0 := time.Now()
 
 	// Step 1: multipart
-	xmlBuf, lpImg, dtImg, ok := h.parseMultipartExpectXML(c)
+	xmlBuf, lpImg, dtImg, ok := h.parseMultipartExpectXML(c, "zoning.exit", "EXT")
 	if !ok {
 		return
 	}
 	t1 := time.Since(t0)
 
 	// Step 2: parse XML
-	plate, _, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
+	plate, uuid, _, ip, vehicleType, ok := h.parsePlateBundle(xmlBuf)
 	if !ok {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:   "zoning.exit",
+			Direction:  "EXT",
+			ParseError: fmt.Errorf("failed to parse XML"),
+		})
 		c.String(http.StatusOK, "Failed to parse XML")
 		return
 	}
@@ -393,6 +466,16 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 
 	// unknown
 	if plate == "unknown" {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:     "zoning.exit",
+			Direction:    "EXT",
+			GateNo:       gateNo,
+			CameraIP:     ip,
+			UUID:         uuid,
+			PlateText:    plate,
+			RawPlateText: plate,
+			VehicleType:  vehicleType,
+		})
 		payload := map[string]any{
 			"status":  false,
 			"message": "cannot read license plate",
@@ -432,10 +515,31 @@ func (h *Handler) ZoningExit(c *gin.Context) {
 
 	resData, err := h.postJSON(transitionURL, reqBody)
 	if err != nil {
+		h.observeLPR(c, lpr.ObserveInput{
+			Endpoint:      "zoning.exit",
+			Direction:     "EXT",
+			GateNo:        gateNo,
+			CameraIP:      ip,
+			UUID:          uuid,
+			PlateText:     plate,
+			RawPlateText:  plate,
+			VehicleType:   vehicleType,
+			UpstreamError: err,
+		})
 		log.Printf("[transition][EXT] error: %v", err)
 		c.String(http.StatusBadGateway, "transition failed")
 		return
 	}
+	h.observeLPR(c, lpr.ObserveInput{
+		Endpoint:     "zoning.exit",
+		Direction:    "EXT",
+		GateNo:       gateNo,
+		CameraIP:     ip,
+		UUID:         uuid,
+		PlateText:    plate,
+		RawPlateText: plate,
+		VehicleType:  vehicleType,
+	})
 	t4 := time.Since(t0) - t1 - t2 - t3
 
 	// เติมรูปป้ายเข้า data
@@ -607,4 +711,19 @@ func (h *Handler) postJSON(url string, body map[string]any) (map[string]any, err
 func (h *Handler) broadcastJSON(room string, payload map[string]any) {
 	b, _ := json.Marshal(payload)
 	h.hub.Broadcast(room, b)
+}
+
+func (h *Handler) observeLPR(c *gin.Context, input lpr.ObserveInput) {
+	if h.lprObserver == nil {
+		return
+	}
+	if input.GateNo == "" {
+		input.GateNo = c.Query("gate_no")
+	}
+	if input.RequestID == "" {
+		if rid, ok := c.Get("request_id"); ok {
+			input.RequestID = fmt.Sprint(rid)
+		}
+	}
+	h.lprObserver.ObserveHook(c.Request.Context(), input)
 }
