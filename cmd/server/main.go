@@ -101,7 +101,7 @@ func main() {
 	// ---------- Gin ----------
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), config.RequestIDMiddleware(), config.LoggerMiddleware())
+	r.Use(gin.Recovery(), config.CORSMiddleware(cfg), config.RequestIDMiddleware(), config.LoggerMiddleware())
 
 	// ---------- Swagger ----------
 	docs.SwaggerInfo.BasePath = "/"

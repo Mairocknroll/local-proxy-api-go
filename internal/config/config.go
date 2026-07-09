@@ -29,6 +29,7 @@ type Config struct {
 	LPRMonitorEnabled       bool
 	LPRRescueToKioskEnabled bool
 	LPRRescueWindow         time.Duration
+	CORSAllowedOrigins      []string
 }
 
 func Load() *Config {
@@ -47,6 +48,7 @@ func Load() *Config {
 		LPRMonitorEnabled:       boolEnv("LPR_MONITOR_ENABLED", true),
 		LPRRescueToKioskEnabled: boolEnv("LPR_RESCUE_TO_KIOSK_ENABLED", true),
 		LPRRescueWindow:         time.Duration(intEnv("LPR_RESCUE_WINDOW_SECONDS", 30)) * time.Second,
+		CORSAllowedOrigins:      csvEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://172.20.9.2:5173"),
 	}
 }
 
@@ -133,6 +135,35 @@ func LoggerMiddleware() gin.HandlerFunc {
 	}
 }
 
+func CORSMiddleware(cfg *Config) gin.HandlerFunc {
+	allowedOrigins := map[string]struct{}{}
+	if cfg != nil {
+		for _, origin := range cfg.CORSAllowedOrigins {
+			if origin = strings.TrimSpace(origin); origin != "" {
+				allowedOrigins[origin] = struct{}{}
+			}
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if _, ok := allowedOrigins[origin]; ok {
+			headers := c.Writer.Header()
+			headers.Set("Access-Control-Allow-Origin", origin)
+			headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			headers.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-Id")
+			headers.Set("Vary", "Origin")
+		}
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
+}
+
 // ApiKeyMiddleware ตรวจสอบ header X-Api-Key ให้ตรงกับ cfg.ImageAPIKey
 func ApiKeyMiddleware(cfg *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -207,4 +238,16 @@ func intEnv(key string, def int) int {
 		}
 	}
 	return def
+}
+
+func csvEnv(key string, def string) []string {
+	raw := getenv(key, def)
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
