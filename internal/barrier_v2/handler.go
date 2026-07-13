@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,49 @@ func getModbusSlaveID() byte {
 	return byte(getenvInt("MODBUS_SLAVE_ID", 1))
 }
 
+// เวลารอคิว lock ต่อ PLC ตัวเดียวกัน ถ้ารอเกินนี้แล้วยังไม่ว่าง จะตีกลับ "gate busy" ทันที (ไม่ค้าง)
+func getModbusLockWait() time.Duration {
+	return time.Duration(getenvInt("MODBUS_LOCK_WAIT_MS", 3000)) * time.Millisecond
+}
+
+// ---------- Per-IP lock ----------
+// กันไม่ให้มีคำสั่ง Modbus ซ้อนกันไปที่ PLC ตัวเดียวกัน (relay board ส่วนใหญ่รับ connection ทีละ 1)
+// ใช้ buffered channel ขนาด 1 เป็น mutex ที่ select-timeout ได้ เพื่อไม่ให้ waiter ค้างไม่จำกัด
+var (
+	ipLocksMu sync.Mutex
+	ipLocks   = make(map[string]chan struct{})
+)
+
+func ipLockChan(ip string) chan struct{} {
+	ipLocksMu.Lock()
+	defer ipLocksMu.Unlock()
+	ch, ok := ipLocks[ip]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		ipLocks[ip] = ch
+	}
+	return ch
+}
+
+// acquireIPLock พยายามจับ lock ของ ip ภายในเวลา wait; ได้ -> true, หมดเวลา -> false
+func acquireIPLock(ip string, wait time.Duration) bool {
+	ch := ipLockChan(ip)
+	select {
+	case ch <- struct{}{}:
+		return true
+	case <-time.After(wait):
+		return false
+	}
+}
+
+func releaseIPLock(ip string) {
+	ch := ipLockChan(ip)
+	select {
+	case <-ch:
+	default:
+	}
+}
+
 // ---------- Validators ----------
 var (
 	reDirection = regexp.MustCompile(`^(ENT|EXT)$`)
@@ -65,6 +109,13 @@ func getDeviceIP(direction, gate, location string) string {
 
 // ---------- Modbus ----------
 func toggleCoil(ip string, coilAddress int) error {
+	// Serialize ต่อ PLC IP: ยิง Modbus ได้ทีละคำสั่ง ถ้าตัวก่อนหน้ายังไม่เสร็จภายใน lockWait
+	// จะตีกลับ "gate busy" ทันที แทนที่จะค้างรอ connection
+	if !acquireIPLock(ip, getModbusLockWait()) {
+		return fmt.Errorf("gate busy: another command in progress for %s", ip)
+	}
+	defer releaseIPLock(ip)
+
 	addr := fmt.Sprintf("%s:%s", ip, getModbusPort())
 
 	h := modbus.NewTCPClientHandler(addr)
